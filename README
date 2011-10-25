@@ -1,0 +1,6 @@
+TrotiNet is a proxy library implemented in C#. It aims at delivering a simple,
+reusable framework for developing any sort of C# proxies.
+
+TrotiNet is distributed under the GNU Lesser General Public License v3.0 (LGPL)
+  http://www.gnu.org/licenses/lgpl.html
+
