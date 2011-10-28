@@ -222,7 +222,8 @@ namespace TrotiNet
             if (host != null)
             {
 #if false
-                // XXX Not sure whether this can happen or if it is desirable
+                // XXX Not sure whether this can happen (without doing ad
+                // replacement) or if we want to prevent it
                 if (hh_rq.Host != null)
                 {
                     // Does hh_rq.Host and host match? (disregarding
@@ -453,6 +454,9 @@ namespace TrotiNet
                     }
                     RequestHeaders.ProxyConnection = null;
                 }
+
+                if (bPersistConnection)
+                    SocketPS.KeepAlive = true;
 
                 // Find out if there is a message body, part 1
                 // (RFC 2616, section 4.3)

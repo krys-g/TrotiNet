@@ -21,6 +21,25 @@ namespace TrotiNet
         /// </summary>
         public int id;
 
+
+        /// <summary>
+        /// Set the TCP Keep Alive option on the socket
+        /// </summary>
+        public bool KeepAlive
+        {
+            get { return _KeepAlive; }
+            set
+            {
+                if (_KeepAlive != value)
+                {
+                    LowLevelSocket.SetSocketOption(SocketOptionLevel.Socket,
+                        SocketOptionName.KeepAlive, value);
+                    _KeepAlive = value;
+                }
+            }
+        }
+        bool _KeepAlive;
+
         /// <summary>
         /// Wrap a Socket instance into a HttpSocket instance
         /// </summary>
