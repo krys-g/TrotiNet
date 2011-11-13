@@ -14,7 +14,7 @@ clean:
 
 release: set_version compile
 	@mkdir -p Release/TrotiNet-${VERSION}
-	@cp Test/bin/Release/{log4net.dll,TrotiNet.{dll,xml}} \
+	@cp Lib/bin/Release/{log4net.dll,TrotiNet.{dll,xml}} \
           Release/TrotiNet-${VERSION}/
 	@cd Release && zip -r TrotiNet-${VERSION}.zip TrotiNet-${VERSION}
 	@rm -fr Release/TrotiNet-${VERSION}
