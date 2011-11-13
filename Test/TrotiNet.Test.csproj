@@ -49,6 +49,7 @@
     <Compile Include="TcpCommon.cs" />
     <Compile Include="TestHeaders.cs" />
     <Compile Include="TestIo.cs" />
+    <Compile Include="TestProxySettings.cs" />
     <Compile Include="TestServer.cs" />
   </ItemGroup>
   <ItemGroup>

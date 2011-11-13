@@ -28,6 +28,15 @@ namespace TrotiNet
         }
 
         /// <summary>
+        /// Content-Encoding header value
+        /// </summary>
+        public string ContentEncoding
+        {
+            get { return GetItem<string>("content-encoding"); }
+            set { SetItem("Content-Encoding", value, HeaderType.String); }
+        }
+
+        /// <summary>
         /// Content-Length header value
         /// </summary>
         public uint? ContentLength
@@ -84,6 +93,15 @@ namespace TrotiNet
         }
 
         /// <summary>
+        /// Referer (sic) header value
+        /// </summary>
+        public string Referer
+        {
+            get { return GetItem<string>("referer"); }
+            set { SetItem("Referer", value, HeaderType.String); }
+        }
+
+        /// <summary>
         /// Transfer-Encoding header value
         /// </summary>
         public string[] TransferEncoding
@@ -129,9 +147,19 @@ namespace TrotiNet
 
                 string previous_value = null;
                 if (Headers.TryGetValue(HeaderName, out previous_value))
+                {
                     // Duplicate headers: concatenate them
                     // (RFC 2616, section 4.2)
-                    Headers[HeaderName] = previous_value + "," + HeaderValue;
+
+                    // However, this should only occur if the value of that
+                    // header is a comma-separated list. In the real world,
+                    // it has been observed that headers with
+                    // non-comma-separated values, such as Content-Length, *are*
+                    // in some rare cases repeated, so we should not concatenate
+                    // the values.
+                    if (!HeaderName.Equals("content-length"))
+                        Headers[HeaderName] = previous_value + "," + HeaderValue;
+                }
                 else
                     Headers[HeaderName] = HeaderValue;
             }
@@ -142,9 +170,11 @@ namespace TrotiNet
             // If headers are added, don't forget to update RemoveHeader
             // as well.
             Connection = ParseMultipleStringValues("connection");
+            ContentEncoding = ParseStringValue("content-encoding");
             ContentLength = ParseIntValue("content-length");
             Host = ParseStringValue("host");
             ProxyConnection = ParseMultipleStringValues("proxy-connection");
+            Referer = ParseStringValue("referer");
             TransferEncoding = ParseMultipleStringValues("transfer-encoding");
         }
 

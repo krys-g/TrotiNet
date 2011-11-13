@@ -430,9 +430,10 @@ namespace TrotiNet
                 if (size == 0)
                     break;
                 TunnelDataTo(dest, size);
-                // Read one more CRLF
-                chunk_header = ReadAsciiLine();
-                System.Diagnostics.Debug.Assert(chunk_header.Length == 0);
+                // Read/write one more CRLF
+                string new_line = ReadAsciiLine();
+                System.Diagnostics.Debug.Assert(new_line.Length == 0);
+                dest.WriteAsciiLine(new_line);
             }
             string line;
             do

@@ -18,13 +18,6 @@ namespace TrotiNet
         static readonly ILog log = Log.Get();
 
         /// <summary>
-        /// Set to true if the proxy is not connecting to the internet,
-        /// but to another proxy instead
-        /// </summary>
-        /// <remarks>XXX FIXME not implemented</remarks>
-        protected bool bRelayingToProxy = false;
-
-        /// <summary>
         /// Port to which <code>SocketBP</code> is currently connected
         /// </summary>
         protected int DestinationPort;
@@ -34,6 +27,27 @@ namespace TrotiNet
         /// connected
         /// </summary>
         protected string DestinationHostName;
+
+        /// <summary>
+        /// Set to a proxy host name if our proxy is not connecting to
+        /// the internet, but to another proxy instead
+        /// </summary>
+        protected string RelayHttpProxyHost;
+
+        /// <summary>
+        /// Set to a proxy bypass specification if our proxy is not connecting
+        /// to the internet, but to another proxy instead
+        /// </summary>
+        /// <remarks>
+        /// XXX Bypass not implemented
+        /// </remarks>
+        protected string RelayHttpProxyOverride;
+
+        /// <summary>
+        /// Set to a proxy port if our proxy is not connecting to
+        /// the internet, but to another proxy instead
+        /// </summary>
+        protected int RelayHttpProxyPort;
 
         /// <summary>
         /// Socket dedicated to the (client) browser-proxy communication
@@ -104,6 +118,10 @@ namespace TrotiNet
                 }
                 catch (Exception ee)
                 {
+                    if (ip.Equals(IPAddress.IPv6Loopback))
+                        // Do not log that
+                        continue;
+
                     if (e == null)
                         e = ee;
                     if (socket != null)
@@ -240,7 +258,7 @@ namespace TrotiNet
                 // Remove the host from the request URI, unless the "server"
                 // is actually a proxy, in which case the URI should remain
                 // unchanged. (RFC 2616, section 5.1.2)
-                if (!bRelayingToProxy)
+                if (RelayHttpProxyHost == null)
                 {
                     hrl.URI = hrl.URI.Substring(prefix);
                     log.Debug("Rewriting request line as: " +
@@ -268,6 +286,26 @@ namespace TrotiNet
         }
 
         abstract internal bool LogicLoop();
+
+        /// <summary>
+        /// In case of a proxy chain, set the next proxy to contact
+        /// </summary>
+        /// <remarks>
+        /// <code>ProxyOverride</code> is ignored.
+        /// </remarks>
+        public void SetRelayProxy(SystemProxySettings sps)
+        {
+            if (sps == null || !sps.ProxyEnable)
+            {
+                RelayHttpProxyHost = null;
+                RelayHttpProxyPort = 0;
+                return;
+            }
+
+            sps.GetHttpOnlyProxy(out RelayHttpProxyHost,
+                out RelayHttpProxyPort);
+            RelayHttpProxyOverride = null;
+        }
     }
 
     /// <summary>
@@ -336,9 +374,6 @@ namespace TrotiNet
 
                 if (RequestLine.Method.Equals("CONNECT"))
                 {
-                    /* XXX FIXME socket gets closed at:
-                     * RequestHeaders.SendTo(SocketPS)
-                     */
                     log.Debug("Method CONNECT not implemented");
                     SocketBP.Send501();
                     return false;
@@ -347,13 +382,15 @@ namespace TrotiNet
                 log.Info("Got request " + RequestLine.RequestLine);
                 OnReceiveRequest();
 
-                if (!bRelayingToProxy)
+                if (RelayHttpProxyHost == null)
                 {
                     int NewDestinationPort;
                     string NewDestinationHost = ParseDestinationHostAndPort(
                         RequestLine, RequestHeaders, out NewDestinationPort);
                     Connect(NewDestinationHost, NewDestinationPort);
                 }
+                else
+                    Connect(RelayHttpProxyHost, RelayHttpProxyPort);
 
                 // Find out whether the request has a message body
                 // (RFC 2616, section 4.3); if it has, get the message length
@@ -373,6 +410,33 @@ namespace TrotiNet
                 {
                     bRequestHasMessage = true;
                     RequestMessageLength = (uint)RequestHeaders.ContentLength;
+                }
+
+                bool bUseDefaultPersist = true;
+                if (RequestHeaders.ProxyConnection != null)
+                {
+                    // Note: This is not part of the HTTP 1.1 standard. See
+                    // http://homepage.ntlworld.com./jonathan.deboynepollard/
+                    //                   FGA/web-proxy-connection-header.html
+                    foreach (string i in RequestHeaders.ProxyConnection)
+                    {
+                        // Note: we might want to distinguish between persisting
+                        // SocketBP (ProxyConnection) and SocketPS (Connection)
+                        if (i.Equals("close"))
+                        {
+                            bPersistConnection = false;
+                            bUseDefaultPersist = false;
+                            break;
+                        }
+                        if (i.Equals("keep-alive"))
+                        {
+                            bPersistConnection = true;
+                            bUseDefaultPersist = false;
+                            break;
+                        }
+                    }
+                    if (RelayHttpProxyHost == null)
+                        RequestHeaders.ProxyConnection = null;
                 }
 
                 // Transmit the request to the server
@@ -405,66 +469,54 @@ namespace TrotiNet
                 log.Debug("AH: " + ResponseHeaders.HeadersInOrder);
 #endif
 
-                // Transmit the response header to the client
-                ResponseStatusLine.SendTo(SocketBP);
-                ResponseHeaders.SendTo(SocketBP);
-
                 // Update bPersistConnection (RFC 2616, section 14.10)
-                if (ResponseStatusLine.ProtocolVersion.Equals("1.0"))
-                    bPersistConnection = false;
-                else
-                    bPersistConnection = true;
-                if (bPersistConnection && RequestHeaders.Connection != null)
+                if (RequestHeaders.Connection != null)
                     foreach (var item in RequestHeaders.Connection)
+                    {
                         if (item.Equals("close"))
                         {
                             bPersistConnection = false;
+                            bUseDefaultPersist = false;
                             break;
                         }
-                if (bPersistConnection && ResponseHeaders.Connection != null)
+                        if (item.Equals("keep-alive"))
+                        {
+                            bPersistConnection = true;
+                            bUseDefaultPersist = false;
+                            break;
+                        }
+                    }
+                if (ResponseHeaders.Connection != null)
                     foreach (var item in ResponseHeaders.Connection)
+                    {
                         if (item.Equals("close"))
                         {
                             bPersistConnection = false;
+                            bUseDefaultPersist = false;
                             break;
                         }
+                        if (item.Equals("keep-alive"))
+                        {
+                            bPersistConnection = true;
+                            bUseDefaultPersist = false;
+                            break;
+                        }
+                    }
+                if (bUseDefaultPersist)
+                    bPersistConnection =
+                        (!ResponseStatusLine.ProtocolVersion.Equals("1.0"));
 
                 // Note: we do not remove fields mentioned in the
                 //  'Connection' header (the specs say we should).
 
-                if (RequestHeaders.ProxyConnection != null)
-                {
-                    // Note: This is not part of the HTTP 1.1 standard. See
-                    // http://homepage.ntlworld.com./jonathan.deboynepollard/
-                    //                   FGA/web-proxy-connection-header.html
-                    foreach (string i in RequestHeaders.ProxyConnection)
-                    {
-                        if (i.Equals("close"))
-                        {
-                            bPersistConnection = false;
-                            // XXX if protocol = 1.1... ?
-                            break;
-                        }
-                        if (i.Equals("keep-alive"))
-                        {
-                            bPersistConnection = true;
-                            // XXX if protocol = 1.0... ?
-                            break;
-                        }
-                    }
-                    RequestHeaders.ProxyConnection = null;
-                }
-
                 if (bPersistConnection)
                     SocketPS.KeepAlive = true;
 
-                // Find out if there is a message body, part 1
-                // (RFC 2616, section 4.3)
-                if (ResponseHeaders.TransferEncoding == null &&
-                    ResponseHeaders.ContentLength == null)
-                    goto no_message_body;
+                // Transmit the response header to the client
+                ResponseStatusLine.SendTo(SocketBP);
+                ResponseHeaders.SendTo(SocketBP);
 
-                // Find out if there is a message body, part 2
+                // Find out if there is a message body
                 // (RFC 2616, section 4.4)
                 int sc = ResponseStatusLine.StatusCode;
                 if (RequestLine.Method.Equals("HEAD") ||
@@ -482,23 +534,28 @@ namespace TrotiNet
                         bResponseMessageChunked);
                 }
                 else
+                if (ResponseHeaders.ContentLength != null)
                 {
-                    System.Diagnostics.Debug.Assert(
-                        ResponseHeaders.ContentLength != null);
                     ResponseMessageLength =
                         (uint)ResponseHeaders.ContentLength;
                     if (ResponseMessageLength == 0)
                         goto no_message_body;
+                }
+                else
+                {
+                    // If the connection is not being closed,
+                    // we need a content length.
+                    System.Diagnostics.Debug.Assert(!bPersistConnection);
                 }
 
                 if (!bPersistConnection)
                     // Pipeline until the connection is closed
                     SocketPS.TunnelDataTo(SocketBP);
                 else
-                    if (bResponseMessageChunked)
-                        SocketPS.TunnelChunkedDataTo(SocketBP);
-                    else
-                        SocketPS.TunnelDataTo(SocketBP, ResponseMessageLength);
+                if (bResponseMessageChunked)
+                    SocketPS.TunnelChunkedDataTo(SocketBP);
+                else
+                    SocketPS.TunnelDataTo(SocketBP, ResponseMessageLength);
 
             no_message_body: ;
             }
