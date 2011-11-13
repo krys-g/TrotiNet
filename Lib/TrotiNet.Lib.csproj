@@ -61,6 +61,7 @@
     <Reference Include="System.XML" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="SystemProxySettings.cs" />
     <Compile Include="Exceptions.cs" />
     <Compile Include="HttpHeaders.cs" />
     <Compile Include="HttpRequestLine.cs" />

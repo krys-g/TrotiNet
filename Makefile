@@ -1,4 +1,5 @@
-MSBUILD:=msbuild.exe
+#MSBUILD:=msbuild.exe
+MSBUILD:=xbuild
 MSBUILD_OPT:=/nologo /verbosity:quiet
 BUILD_OPT:=/p:Platform="Any CPU" /p:Configuration=Release
 NUNIT:=/cygdrive/c/Program Files/NUnit 2.5.10/bin/net-2.0/nunit-console-x86.exe
@@ -12,12 +13,12 @@ clean:
 	@find -depth -type d -name obj -exec rm -fr {} \;
 
 release: set_version compile
-	@mkdir -p Package/TrotiNet-${VERSION}
+	@mkdir -p Release/TrotiNet-${VERSION}
 	@cp Test/bin/Release/{log4net.dll,TrotiNet.{dll,xml}} \
-          Package/TrotiNet-${VERSION}/
-	@cd Package && zip -r TrotiNet-${VERSION}.zip TrotiNet-${VERSION}
-	@rm -fr Package/TrotiNet-${VERSION}
-	@echo "Created Package/TrotiNet-${VERSION}.zip"
+          Release/TrotiNet-${VERSION}/
+	@cd Release && zip -r TrotiNet-${VERSION}.zip TrotiNet-${VERSION}
+	@rm -fr Release/TrotiNet-${VERSION}
+	@echo "Created Release/TrotiNet-${VERSION}.zip"
 
 set_version:
 	@echo "Setting assemblies' version to ${VERSION}"

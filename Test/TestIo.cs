@@ -24,7 +24,7 @@ namespace TrotiNet.Test
         {
             // Missing empty line
             var incomplete = "Host:www.crunchy.frog\r\n";
-            HttpHeaders hh = TcpCommon.ParseHttpHeaders(incomplete);
+            /*var hh = */TcpCommon.ParseHttpHeaders(incomplete);
         }
 
         [Test]
@@ -33,7 +33,7 @@ namespace TrotiNet.Test
         {
             // Not a proper key:value entry
             var incomplete = "Buzz Lightyear\r\n\r\n";
-            HttpHeaders hh = TcpCommon.ParseHttpHeaders(incomplete);
+            /*var hh = */TcpCommon.ParseHttpHeaders(incomplete);
         }
 
         [Test]
@@ -134,7 +134,7 @@ namespace TrotiNet.Test
             {
                 var hsl = new HttpStatusLine(hs);
                 Assert.AreEqual(200, hsl.StatusCode);
-                var hh = new HttpHeaders(hs);
+                /*var hh = */new HttpHeaders(hs);
                 uint r = hs.ReadBinary();
                 Assert.AreEqual(r, 3);
                 Assert.AreEqual('1', hs.Buffer[0]);
@@ -156,7 +156,7 @@ namespace TrotiNet.Test
             {
                 var hsl = new HttpStatusLine(hs);
                 Assert.AreEqual(200, hsl.StatusCode);
-                var hh = new HttpHeaders(hs);
+                /*var hh = */new HttpHeaders(hs);
                 var line = hs.ReadAsciiLine();
                 Assert.AreEqual(msg, line);
             }
