@@ -21,7 +21,6 @@ namespace TrotiNet
         /// </summary>
         public int id;
 
-
         /// <summary>
         /// Set the TCP Keep Alive option on the socket
         /// </summary>
@@ -258,27 +257,34 @@ namespace TrotiNet
 
         /// <summary>
         /// Transfer data from this socket to the destination socket
+        /// until this socket closes
         /// </summary>
         /// <returns>The number of bytes sent</returns>
         public uint TunnelDataTo(HttpSocket dest)
         {
             uint total_sent = 0;
-            if (AvailableData == 0)
-                ReadRaw();
-            while(AvailableData > 0)
+
+            try
             {
-                uint sent = dest.WriteRaw(Buffer, BufferPosition,
-                    AvailableData);
-                if (sent < AvailableData)
-                    throw new IoBroken();
-                total_sent += sent;
-                ReadRaw();
+                if (AvailableData == 0)
+                    ReadRaw();
+                while (AvailableData > 0)
+                {
+                    uint sent = dest.WriteRaw(Buffer, BufferPosition,
+                        AvailableData);
+                    if (sent < AvailableData)
+                        throw new IoBroken();
+                    total_sent += sent;
+                    ReadRaw();
+                }
             }
+            catch (SocketException) { /* ignore */ }
+
             return total_sent;
         }
 
         /// <summary>
-        /// Read <code>nb_bytes</code> bytes from the socket,
+        /// Read <c>nb_bytes</c> bytes from the socket,
         /// and send it to the destination socket
         /// </summary>
         /// <returns>The number of bytes sent</returns>
@@ -329,7 +335,7 @@ namespace TrotiNet
         }
 
         /// <summary>
-        /// Write the first <code>nb_bytes</code> of <code>b</code> to the
+        /// Write the first <c>nb_bytes</c> of <c>b</c> to the
         /// socket
         /// </summary>
         public uint WriteBinary(byte[] b, uint nb_bytes)
@@ -338,8 +344,8 @@ namespace TrotiNet
         }
 
         /// <summary>
-        /// Write <code>nb_bytes</code> of <code>b</code>, starting at offset
-        /// <code>offset</code> to the socket
+        /// Write <c>nb_bytes</c> of <c>b</c>, starting at offset
+        /// <c>offset</c> to the socket
         /// </summary>
         protected uint WriteRaw(byte[] b, uint offset, uint nb_bytes)
         {
@@ -365,11 +371,27 @@ namespace TrotiNet
         }
 
         /// <summary>
+        /// Send a HTTP 302 redirection over the socket
+        /// </summary>
+        public void Send302()
+        {
+            SendHttpError("302 Found");
+        }
+
+        /// <summary>
         /// Send a HTTP 400 error over the socket
         /// </summary>
         public void Send400()
         {
             SendHttpError("400 Bad Request");
+        }
+
+        /// <summary>
+        /// Send a HTTP 403 error over the socket
+        /// </summary>
+        public void Send403()
+        {
+            SendHttpError("403 Forbidden");
         }
 
         /// <summary>

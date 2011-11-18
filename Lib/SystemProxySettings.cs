@@ -54,51 +54,100 @@ namespace TrotiNet
         /// <summary>
         /// Retrieve the HTTP-specific proxy settings
         /// </summary>
-        public void GetHttpOnlyProxy(out string proxy_host, out int proxy_port)
+        public void GetHttpSpecificProxy(out string proxy_host,
+            out int proxy_port)
         {
+            GetProtocolSpecificProxy("http=", 80, out proxy_host,
+                out proxy_port);
+        }
+
+        /// <summary>
+        /// Retrieve the HTTP-specific proxy settings
+        /// </summary>
+        public void GetHttpsSpecificProxy(out string proxy_host,
+            out int proxy_port)
+        {
+            GetProtocolSpecificProxy("https=", 443, out proxy_host,
+                out proxy_port);
+        }
+
+        /// <summary>
+        /// Extract protocol-specific proxy settings
+        /// </summary>
+        /// <param name="protocol">
+        /// One of "ftp=", "socks=", "http=", "https="; it must end with a
+        /// '=' sign.
+        /// </param>
+        /// <param name="default_port">
+        /// The default port for the protocol, e.g. 80 for HTTP
+        /// </param>
+        /// <param name="proxy_host">
+        /// Will be set to the proxy host name
+        /// </param>
+        /// <param name="proxy_port">
+        /// Will be set to the proxy port
+        /// </param>
+        void GetProtocolSpecificProxy(string protocol, int default_port,
+            out string proxy_host, out int proxy_port)
+        {
+            System.Diagnostics.Debug.Assert(
+                protocol[protocol.Length - 1] == '=');
+
             proxy_host = null;
             proxy_port = 0;
 
             if (!ProxyEnable)
                 return;
 
+            if (String.IsNullOrEmpty(ProxyServer))
+                return;
+
             // Recall that ProxyServer can have one of these two forms:
             //   [http=]localhost:2000
             //   ftp=ip1:2002;http=ip2:2000;https=ip3:2001;socks=ip4:2003
-            string HttpProxyServer = null;
+            string ProtocolProxyServer = null;
             if (ProxyServer.IndexOf(';') > -1)
             {
-                // Find the http-only part
+                // Find the protocol-specific part
                 var items = ProxyServer.Split(';');
                 for (int i = 0; i < items.Length; i++)
-                    if (items[i].StartsWith("http="))
+                    if (items[i].StartsWith(protocol))
                     {
-                        HttpProxyServer = items[i];
+                        ProtocolProxyServer = items[i];
                         break;
                     }
-                if (HttpProxyServer == null)
-                    // We didn't find an entry with "http="
+                if (ProtocolProxyServer == null)
+                    // We didn't find a corresponding entry
                     return;
             }
             else
-                // Either "<host>[:<port>]", or "http=<host>[:<port>]"
-                HttpProxyServer = ProxyServer;
+                // Either "<host>[:<port>]", or "<protocol><host>[:<port>]"
+                ProtocolProxyServer = ProxyServer;
 
-            // Again, we have "<host>[:<port>]" or "http=<host>[:<port>]"
-            if (HttpProxyServer.StartsWith("http="))
-                HttpProxyServer = HttpProxyServer.Substring(5);
+            // Again, we have "<host>[:<port>]" or "<protocol><host>[:<port>]"
+            if (ProtocolProxyServer.IndexOf('=') > -1)
+            {
+                // We have "<protocol><host>[:<port>]".
+                // Does the "<protocol>" prefix match?
+                if (ProtocolProxyServer.StartsWith(protocol))
+                    ProtocolProxyServer = ProtocolProxyServer.Substring(
+                        protocol.Length);
+                else
+                    // The entry is for another protocol
+                    return;
+            }
 
             // Now we only have "<host>[:<port>]"
-            var c = HttpProxyServer.IndexOf(':');
-            proxy_port = 80;
+            var c = ProtocolProxyServer.IndexOf(':');
+            proxy_port = default_port;
             if (c < 0)
                 // "<host>"
-                proxy_host = HttpProxyServer;
+                proxy_host = ProtocolProxyServer;
             else
             {
                 // "<host>:<port>"
-                proxy_host = HttpProxyServer.Substring(0, c);
-                Int32.TryParse(HttpProxyServer.Substring(c + 1),
+                proxy_host = ProtocolProxyServer.Substring(0, c);
+                Int32.TryParse(ProtocolProxyServer.Substring(c + 1),
                     out proxy_port);
             }
         }
@@ -110,7 +159,7 @@ namespace TrotiNet
         /// <remarks>
         /// ProxyEnable is not modified either, and must be updated separately.
         /// </remarks>
-        public void SetHttpOnlyProxy(string proxy_host, int proxy_port)
+        public void SetHttpSpecificProxy(string proxy_host, int proxy_port)
         {
             var GlobalProxyServer = proxy_host + ":" + proxy_port;
             var HttpProxyServer = "http=" + GlobalProxyServer;

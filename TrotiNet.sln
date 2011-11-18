@@ -8,7 +8,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrotiNet.Test", "Test\Troti
 		{7FEDA61E-ED0A-4357-932E-746C697E464E} = {7FEDA61E-ED0A-4357-932E-746C697E464E}
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrotiNet.Console", "Console\TrotiNet.Console.csproj", "{C0D1B909-A5A6-4508-BEC7-A27459D59483}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrotiNet.Example", "Example\TrotiNet.Example.csproj", "{C0D1B909-A5A6-4508-BEC7-A27459D59483}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

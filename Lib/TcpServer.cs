@@ -265,7 +265,7 @@ namespace TrotiNet
         void StartListening(ref Socket ListeningSocket)
         {
             // Note: Do not catch exceptions until we reach the main
-            // listening loop, because <code>StartThread</code> should
+            // listening loop, because <c>StartThread</c> should
             // intercept initialization exceptions.
 
             // Establish the local endpoint for the socket (only on localhost)

@@ -1,6 +1,4 @@
-﻿//#define DEBUG_EXTRA
-
-using System;
+﻿using System;
 using System.Net;
 using System.Net.Sockets;
 using log4net;
@@ -18,12 +16,12 @@ namespace TrotiNet
         static readonly ILog log = Log.Get();
 
         /// <summary>
-        /// Port to which <code>SocketBP</code> is currently connected
+        /// Port to which <c>SocketBP</c> is currently connected
         /// </summary>
         protected int DestinationPort;
 
         /// <summary>
-        /// Name of the host to which <code>SocketBP</code> is currently
+        /// Name of the host to which <c>SocketBP</c> is currently
         /// connected
         /// </summary>
         protected string DestinationHostName;
@@ -72,7 +70,7 @@ namespace TrotiNet
         }
 
         /// <summary>
-        /// If necessary, connect the remote <code>SocketPS</code> socket
+        /// If necessary, connect the remote <c>SocketPS</c> socket
         /// to the given host and port
         /// </summary>
         /// <param name="hostname">Remote host name</param>
@@ -157,7 +155,7 @@ namespace TrotiNet
         /// When this method returns, contains the request port
         /// </param>
         /// <remarks>
-        /// May modify the URI of <code>hrl</code>
+        /// May modify the URI of <c>hrl</c>
         /// </remarks>
         protected string ParseDestinationHostAndPort(
             HttpRequestLine hrl, HttpHeaders hh_rq, out int port)
@@ -291,7 +289,7 @@ namespace TrotiNet
         /// In case of a proxy chain, set the next proxy to contact
         /// </summary>
         /// <remarks>
-        /// <code>ProxyOverride</code> is ignored.
+        /// <c>ProxyOverride</c> is ignored.
         /// </remarks>
         public void SetRelayProxy(SystemProxySettings sps)
         {
@@ -302,7 +300,7 @@ namespace TrotiNet
                 return;
             }
 
-            sps.GetHttpOnlyProxy(out RelayHttpProxyHost,
+            sps.GetHttpSpecificProxy(out RelayHttpProxyHost,
                 out RelayHttpProxyPort);
             RelayHttpProxyOverride = null;
         }
@@ -318,14 +316,9 @@ namespace TrotiNet
         internal BaseProxyLogic(HttpSocket socketBP): base(socketBP) { }
 
         /// <summary>
-        /// Called when RequestLine and RequestHeaders are set
+        /// Continuation delegate used in the request processing pipeline
         /// </summary>
-        virtual protected void OnReceiveRequest() { }
-
-        /// <summary>
-        /// Called when ResponseStatusLine and ResponseHeaders are set
-        /// </summary>
-        virtual protected void OnReceiveResponse() { }
+        protected delegate void ProcessingStep();
 
         /// <summary>
         /// The request line of the HTTP request currently being handled
@@ -347,230 +340,365 @@ namespace TrotiNet
         /// </summary>
         protected HttpHeaders ResponseHeaders;
 
-        override internal bool LogicLoop()
+        /// <summary>
+        /// Maintains the internal state for the request currently being
+        /// processed
+        /// </summary>
+        protected class RequestProcessingState
         {
-            bool bPersistConnection = false;
-            try
+            /// <summary>
+            /// Whether the BP connection should be kept alive after handling
+            /// the current request
+            /// </summary>
+            public bool bPersistConnectionBP;
+
+            /// <summary>
+            /// Whether the PS connection should be kept alive after handling
+            /// the current request
+            /// </summary>
+            public bool bPersistConnectionPS;
+
+            /// <summary>
+            /// Whether the request contains a message
+            /// </summary>
+            public bool bRequestHasMessage;
+
+            /// <summary>
+            /// Length of the request message, if any
+            /// </summary>
+            public uint RequestMessageLength;
+
+            /// <summary>
+            /// Whether the request message (if any) is being transmitted
+            /// in chunks
+            /// </summary>
+            public bool bRequestMessageChunked;
+
+            /// <summary>
+            /// Set to true if no instruction was given in the request headers
+            /// about whether the BP connection should persist
+            /// </summary>
+            public bool bUseDefaultPersistBP;
+
+            /// <summary>
+            /// Points to the next processing step; must be updated after
+            /// each processing step, setting it to null will stop the
+            /// processing
+            /// </summary>
+            public ProcessingStep NextStep;
+
+            /// <summary>
+            /// Processing state constructor
+            /// </summary>
+            /// <param name="StartStep">
+            /// First step of the request processing pipeline
+            /// </param>
+            public RequestProcessingState(ProcessingStep StartStep)
             {
-                try
-                {
-                    RequestLine = new HttpRequestLine(SocketBP);
-                }
-                catch (TrotiNet.IoBroken)
-                {
-                    // The request line is the first line of a HTTP request.
-                    // If none comes in a timely fashion, then we eventually
-                    // get a IoBroken exception, which is common enough
-                    // not to be rethrown.
-                    return false;
-                }
-                catch (SocketException)
-                {
-                    // Ditto
-                    return false;
-                }
-
-                RequestHeaders = new HttpHeaders(SocketBP);
-
-                if (RequestLine.Method.Equals("CONNECT"))
-                {
-                    log.Debug("Method CONNECT not implemented");
-                    SocketBP.Send501();
-                    return false;
-                }
-
-                log.Info("Got request " + RequestLine.RequestLine);
-                OnReceiveRequest();
-
-                if (RelayHttpProxyHost == null)
-                {
-                    int NewDestinationPort;
-                    string NewDestinationHost = ParseDestinationHostAndPort(
-                        RequestLine, RequestHeaders, out NewDestinationPort);
-                    Connect(NewDestinationHost, NewDestinationPort);
-                }
-                else
-                    Connect(RelayHttpProxyHost, RelayHttpProxyPort);
-
-                // Find out whether the request has a message body
-                // (RFC 2616, section 4.3); if it has, get the message length
-                bool bRequestHasMessage = false;
-                uint RequestMessageLength = 0;
-                bool bRequestMessageChunked = false;
-                if (RequestHeaders.TransferEncoding != null)
-                {
-                    bRequestHasMessage = true;
-                    bRequestMessageChunked = Array.IndexOf<string>(
-                     RequestHeaders.TransferEncoding, "chunked") >= 0;
-                    System.Diagnostics.Debug.Assert(
-                        bRequestMessageChunked);
-                }
-                else
-                if (RequestHeaders.ContentLength != null)
-                {
-                    bRequestHasMessage = true;
-                    RequestMessageLength = (uint)RequestHeaders.ContentLength;
-                }
-
-                bool bUseDefaultPersist = true;
-                if (RequestHeaders.ProxyConnection != null)
-                {
-                    // Note: This is not part of the HTTP 1.1 standard. See
-                    // http://homepage.ntlworld.com./jonathan.deboynepollard/
-                    //                   FGA/web-proxy-connection-header.html
-                    foreach (string i in RequestHeaders.ProxyConnection)
-                    {
-                        // Note: we might want to distinguish between persisting
-                        // SocketBP (ProxyConnection) and SocketPS (Connection)
-                        if (i.Equals("close"))
-                        {
-                            bPersistConnection = false;
-                            bUseDefaultPersist = false;
-                            break;
-                        }
-                        if (i.Equals("keep-alive"))
-                        {
-                            bPersistConnection = true;
-                            bUseDefaultPersist = false;
-                            break;
-                        }
-                    }
-                    if (RelayHttpProxyHost == null)
-                        RequestHeaders.ProxyConnection = null;
-                }
-
-                // Transmit the request to the server
-                RequestLine.SendTo(SocketPS);
-                RequestHeaders.SendTo(SocketPS);
-                if (bRequestHasMessage)
-                {
-                    // Tunnel the request message
-                    if (bRequestMessageChunked)
-                        SocketBP.TunnelChunkedDataTo(SocketPS);
-                    else
-                    {
-                        System.Diagnostics.Debug.Assert(
-                            RequestMessageLength > 0);
-                        SocketBP.TunnelDataTo(SocketPS, RequestMessageLength);
-                    }
-                }
-
-#if DEBUG_EXTRA
-                log.Debug("RH: " + RequestHeaders.HeadersInOrder);
-#endif
-
-                // Wait until we receive the response, then parse its header
-                ResponseStatusLine = new HttpStatusLine(SocketPS);
-                ResponseHeaders = new HttpHeaders(SocketPS);
-                OnReceiveResponse();
-
-#if DEBUG_EXTRA
-                log.Debug("ASL: " + ResponseStatusLine.StatusLine);
-                log.Debug("AH: " + ResponseHeaders.HeadersInOrder);
-#endif
-
-                // Update bPersistConnection (RFC 2616, section 14.10)
-                if (RequestHeaders.Connection != null)
-                    foreach (var item in RequestHeaders.Connection)
-                    {
-                        if (item.Equals("close"))
-                        {
-                            bPersistConnection = false;
-                            bUseDefaultPersist = false;
-                            break;
-                        }
-                        if (item.Equals("keep-alive"))
-                        {
-                            bPersistConnection = true;
-                            bUseDefaultPersist = false;
-                            break;
-                        }
-                    }
-                if (ResponseHeaders.Connection != null)
-                    foreach (var item in ResponseHeaders.Connection)
-                    {
-                        if (item.Equals("close"))
-                        {
-                            bPersistConnection = false;
-                            bUseDefaultPersist = false;
-                            break;
-                        }
-                        if (item.Equals("keep-alive"))
-                        {
-                            bPersistConnection = true;
-                            bUseDefaultPersist = false;
-                            break;
-                        }
-                    }
-                if (bUseDefaultPersist)
-                    bPersistConnection =
-                        (!ResponseStatusLine.ProtocolVersion.Equals("1.0"));
-
-                // Note: we do not remove fields mentioned in the
-                //  'Connection' header (the specs say we should).
-
-                if (bPersistConnection)
-                    SocketPS.KeepAlive = true;
-
-                // Transmit the response header to the client
-                ResponseStatusLine.SendTo(SocketBP);
-                ResponseHeaders.SendTo(SocketBP);
-
-                // Find out if there is a message body
-                // (RFC 2616, section 4.4)
-                int sc = ResponseStatusLine.StatusCode;
-                if (RequestLine.Method.Equals("HEAD") ||
-                    sc == 204 || sc == 304 || (sc >= 100 && sc <= 199))
-                    goto no_message_body;
-
-                bool bResponseMessageChunked = false;
-                uint ResponseMessageLength = 0;
-                if (ResponseHeaders.TransferEncoding != null)
-                {
-                    bResponseMessageChunked = Array.IndexOf<string>(
-                     ResponseHeaders.TransferEncoding,
-                     "chunked") >= 0;
-                    System.Diagnostics.Debug.Assert(
-                        bResponseMessageChunked);
-                }
-                else
-                if (ResponseHeaders.ContentLength != null)
-                {
-                    ResponseMessageLength =
-                        (uint)ResponseHeaders.ContentLength;
-                    if (ResponseMessageLength == 0)
-                        goto no_message_body;
-                }
-                else
-                {
-                    // If the connection is not being closed,
-                    // we need a content length.
-                    System.Diagnostics.Debug.Assert(!bPersistConnection);
-                }
-
-                if (!bPersistConnection)
-                    // Pipeline until the connection is closed
-                    SocketPS.TunnelDataTo(SocketBP);
-                else
-                if (bResponseMessageChunked)
-                    SocketPS.TunnelChunkedDataTo(SocketBP);
-                else
-                    SocketPS.TunnelDataTo(SocketBP, ResponseMessageLength);
-
-            no_message_body: ;
+                NextStep = StartStep;
             }
-            catch (Exception e)
-            {
-                log.Error(e);
-                bPersistConnection = false;
-            }
+        };
 
-            if (!bPersistConnection && SocketPS != null)
+        /// <summary>
+        /// Request processing pipeline state
+        /// </summary>
+        /// <seealso cref="RequestProcessingState"/>
+        protected RequestProcessingState State;
+
+        /// <summary>
+        /// Pipeline step: close the connections and stop
+        /// </summary>
+        protected void AbortRequest()
+        {
+            if (SocketPS != null)
             {
                 SocketPS.CloseSocket();
                 SocketPS = null;
             }
-            return bPersistConnection;
+            State.bPersistConnectionBP = false;
+            State.NextStep = null;
+        }
+
+        override internal bool LogicLoop()
+        {
+            // In order to enable derived classes to divert the standard
+            // HTTP request processing in the most flexible way, the processing
+            // is done in a continuation-passing way. That means each step
+            // is responsible for updating State.NextStep, as appropriate.
+
+            try
+            {
+                State = new RequestProcessingState(ReadRequest);
+                while (State.NextStep != null)
+                    State.NextStep();
+
+                return State.bPersistConnectionBP;
+            }
+            catch
+            {
+                AbortRequest();
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Called when RequestLine and RequestHeaders are set
+        /// </summary>
+        /// <remarks>
+        /// May be used to override State.NextStep
+        /// </remarks>
+        virtual protected void OnReceiveRequest() { }
+
+        /// <summary>
+        /// Called when ResponseStatusLine and ResponseHeaders are set
+        /// </summary>
+        /// <remarks>
+        /// May be used to override State.NextStep
+        /// </remarks>
+        virtual protected void OnReceiveResponse() { }
+
+        /// <summary>
+        /// Pipeline step: read the HTTP request from the client, schedule
+        /// the next step to be <c>SendRequest</c>, and call
+        /// <c>OnReceiveRequest</c>
+        /// </summary>
+        protected virtual void ReadRequest()
+        {
+            try
+            {
+                RequestLine = new HttpRequestLine(SocketBP);
+            }
+            catch (TrotiNet.IoBroken)
+            {
+                // The request line is the first line of a HTTP request.
+                // If none comes in a timely fashion, then we eventually
+                // get a IoBroken exception, which is common enough
+                // not to be rethrown.
+                AbortRequest();
+                return;
+            }
+            catch (SocketException)
+            {
+                // Ditto
+                AbortRequest();
+                return;
+            }
+
+            RequestHeaders = new HttpHeaders(SocketBP);
+
+            if (RequestLine.Method.Equals("CONNECT"))
+            {
+                log.Debug("Method CONNECT not implemented");
+                SocketBP.Send501();
+                AbortRequest();
+                return;
+            }
+
+            log.Info("Got request " + RequestLine.RequestLine);
+
+            // We call OnReceiveRequest now because Connect() will
+            // modify the request URI.
+            State.NextStep = SendRequest;
+            OnReceiveRequest();
+
+            // Now we parse the request to:
+            // 1) find out where we should connect
+            // 2) find out whether there is a message body in the request
+            // 3) find out whether the BP connection should be kept-alive
+
+            // Step 1)
+            if (RelayHttpProxyHost == null)
+            {
+                int NewDestinationPort;
+                string NewDestinationHost = ParseDestinationHostAndPort(
+                    RequestLine, RequestHeaders, out NewDestinationPort);
+                Connect(NewDestinationHost, NewDestinationPort);
+            }
+            else
+                Connect(RelayHttpProxyHost, RelayHttpProxyPort);
+
+            // Step 2)
+            // Find out whether the request has a message body
+            // (RFC 2616, section 4.3); if it has, get the message length
+            State.bRequestHasMessage = false;
+            State.RequestMessageLength = 0;
+            State.bRequestMessageChunked = false;
+            if (RequestHeaders.TransferEncoding != null)
+            {
+                State.bRequestHasMessage = true;
+                State.bRequestMessageChunked = Array.IndexOf<string>(
+                 RequestHeaders.TransferEncoding, "chunked") >= 0;
+                System.Diagnostics.Debug.Assert(
+                    State.bRequestMessageChunked);
+            }
+            else
+            if (RequestHeaders.ContentLength != null)
+            {
+                State.RequestMessageLength =
+                    (uint)RequestHeaders.ContentLength;
+
+                // Note: HTTP 1.0 wants "Content-Length: 0" when there
+                // is no entity body. (RFC 1945, section 7.2)
+                if (State.RequestMessageLength > 0)
+                    State.bRequestHasMessage = true;
+            }
+
+            // Step 3)
+            State.bUseDefaultPersistBP = true;
+            if (RequestHeaders.ProxyConnection != null)
+            {
+                // Note: This is not part of the HTTP 1.1 standard. See
+                // http://homepage.ntlworld.com./jonathan.deboynepollard/FGA/web-proxy-connection-header.html
+                foreach (string i in RequestHeaders.ProxyConnection)
+                {
+                    if (i.Equals("close"))
+                    {
+                        State.bPersistConnectionBP = false;
+                        State.bUseDefaultPersistBP = false;
+                        break;
+                    }
+                    if (i.Equals("keep-alive"))
+                    {
+                        State.bPersistConnectionBP = true;
+                        State.bUseDefaultPersistBP = false;
+                        break;
+                    }
+                }
+                if (RelayHttpProxyHost == null)
+                    RequestHeaders.ProxyConnection = null;
+            }
+
+            // Note: we do not remove fields mentioned in the
+            //  'Connection' header (the specs say we should).
+
+        }
+
+        /// <summary>
+        /// Pipeline step: tunnel the request from the client to the remove
+        /// server, and schedule the next step to be <c>ReadResponse</c>
+        /// </summary>
+        protected virtual void SendRequest()
+        {
+            // Transmit the request to the server
+            RequestLine.SendTo(SocketPS);
+            RequestHeaders.SendTo(SocketPS);
+            if (State.bRequestHasMessage)
+            {
+                // Tunnel the request message
+                if (State.bRequestMessageChunked)
+                    SocketBP.TunnelChunkedDataTo(SocketPS);
+                else
+                {
+                    System.Diagnostics.Debug.Assert(
+                        State.RequestMessageLength > 0);
+                    SocketBP.TunnelDataTo(SocketPS, State.RequestMessageLength);
+                }
+            }
+
+            State.NextStep = ReadResponse;
+        }
+
+        /// <summary>
+        /// Pipeline step: read the HTTP response from the local client,
+        /// schedule the next step to be <c>SendResponse</c>, and call
+        /// <c>OnReceiveResponse</c>
+        /// </summary>
+        protected virtual void ReadResponse()
+        {
+            // Wait until we receive the response, then parse its header
+            ResponseStatusLine = new HttpStatusLine(SocketPS);
+            ResponseHeaders = new HttpHeaders(SocketPS);
+
+            // Get bPersistConnectionPS (RFC 2616, section 14.10)
+            bool bUseDefaultPersistPS = true;
+            if (ResponseHeaders.Connection != null)
+                foreach (var item in ResponseHeaders.Connection)
+                {
+                    if (item.Equals("close"))
+                    {
+                        State.bPersistConnectionPS = false;
+                        bUseDefaultPersistPS = false;
+                        break;
+                    }
+                    if (item.Equals("keep-alive"))
+                    {
+                        State.bPersistConnectionPS = true;
+                        bUseDefaultPersistPS = false;
+                        break;
+                    }
+                }
+            if (bUseDefaultPersistPS)
+                State.bPersistConnectionPS =
+                    (!ResponseStatusLine.ProtocolVersion.Equals("1.0"));
+
+            if (State.bPersistConnectionPS)
+                SocketPS.KeepAlive = true;
+
+            State.NextStep = SendResponse;
+            OnReceiveResponse();
+        }
+
+        /// <summary>
+        /// Pipeline: tunnel the HTTP response from the remote server to the
+        /// local client, and end the request processing
+        /// </summary>
+        protected virtual void SendResponse()
+        {
+            // Transmit the response header to the client
+            ResponseStatusLine.SendTo(SocketBP);
+            ResponseHeaders.SendTo(SocketBP);
+
+            // Find out if there is a message body
+            // (RFC 2616, section 4.4)
+            int sc = ResponseStatusLine.StatusCode;
+            if (RequestLine.Method.Equals("HEAD") ||
+                sc == 204 || sc == 304 || (sc >= 100 && sc <= 199))
+                goto no_message_body;
+
+            bool bResponseMessageChunked = false;
+            uint ResponseMessageLength = 0;
+            if (ResponseHeaders.TransferEncoding != null)
+            {
+                bResponseMessageChunked = Array.IndexOf<string>(
+                 ResponseHeaders.TransferEncoding,
+                 "chunked") >= 0;
+                System.Diagnostics.Debug.Assert(
+                    bResponseMessageChunked);
+            }
+            else
+            if (ResponseHeaders.ContentLength != null)
+            {
+                ResponseMessageLength =
+                    (uint)ResponseHeaders.ContentLength;
+                if (ResponseMessageLength == 0)
+                    goto no_message_body;
+            }
+            else
+            {
+                // If the connection is not being closed,
+                // we need a content length.
+                System.Diagnostics.Debug.Assert(
+                    !State.bPersistConnectionPS);
+            }
+
+            if (!State.bPersistConnectionPS)
+                // Pipeline until the connection is closed
+                SocketPS.TunnelDataTo(SocketBP);
+            else
+            if (bResponseMessageChunked)
+                SocketPS.TunnelChunkedDataTo(SocketBP);
+            else
+                SocketPS.TunnelDataTo(SocketBP, ResponseMessageLength);
+
+            no_message_body:
+
+            if (!State.bPersistConnectionPS && SocketPS != null)
+            {
+                SocketPS.CloseSocket();
+                SocketPS = null;
+            }
+
+            State.NextStep = null;
         }
     }
 
@@ -599,7 +727,7 @@ namespace TrotiNet
         /// </summary>
         /// <remarks>
         /// If required, this function should be called from
-        /// <code>OnReceiveRequest</code>.
+        /// <c>OnReceiveRequest</c>.
         /// </remarks>
         public void ChangeRequestURI(string newURI)
         {
@@ -654,7 +782,7 @@ namespace TrotiNet
         }
 
         /// <summary>
-        /// Static constructor with <code>PrintEchoPrefix = true</code>
+        /// Static constructor with <c>PrintEchoPrefix = true</c>
         /// </summary>
         static public AbstractProxyLogic CreateEchoProxy(HttpSocket socketBP)
         {
@@ -662,7 +790,7 @@ namespace TrotiNet
         }
 
         /// <summary>
-        /// Static constructor with <code>PrintEchoPrefix = false</code>
+        /// Static constructor with <c>PrintEchoPrefix = false</c>
         /// </summary>
         static public AbstractProxyLogic CreateMirrorProxy(HttpSocket socketBP)
         {

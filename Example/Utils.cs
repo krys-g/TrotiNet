@@ -1,6 +1,6 @@
 ﻿using System.IO;
 
-namespace TrotiNet
+namespace TrotiNet.Example
 {
     public static class Utils
     {
@@ -52,21 +52,6 @@ namespace TrotiNet
 </log4net>";
             log4net.Config.XmlConfigurator.Configure(
                 new MemoryStream(System.Text.Encoding.ASCII.GetBytes(cfg)));
-        }
-    }
-
-    class Program
-    {
-        static void Main(string[] args)
-        {
-            Utils.Log_Init();
-
-            var s = new TcpServer(2000, false);
-            //s.Start(ProxyDummyEcho.CreateEchoProxy);
-            s.Start(ProxyLogic.CreateProxy);
-            while (true)
-                System.Threading.Thread.Sleep(1000);
-            //s.Stop();
         }
     }
 }

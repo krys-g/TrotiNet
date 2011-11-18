@@ -64,5 +64,13 @@ namespace TrotiNet
         {
             hs.WriteAsciiLine(StatusLine);
         }
+
+        /// <summary>
+        /// Return a string representation of the instance
+        /// </summary>
+        public override string ToString()
+        {
+            return StatusLine;
+        }
     }
 }

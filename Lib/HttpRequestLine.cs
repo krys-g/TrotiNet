@@ -93,6 +93,14 @@ namespace TrotiNet
             hs.WriteAsciiLine(RequestLine);
         }
 
+        /// <summary>
+        /// Return a string representation of the instance
+        /// </summary>
+        public override string ToString()
+        {
+            return RequestLine;
+        }
+
         void UpdateRequestLine()
         {
             RequestLine = Method + " " + URI + " HTTP/" + ProtocolVersion;
