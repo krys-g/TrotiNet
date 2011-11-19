@@ -313,7 +313,8 @@ namespace TrotiNet
             return total_sent;
         }
 
-        static readonly byte[] CRLF_b = { 0x0d, 0x0a };
+        static readonly byte[] b_CRLF = { 0x0d, 0x0a };
+        static readonly char[] c_ChunkSizeEnd = { ' ', ';' };
 
         /// <summary>
         /// Write an ASCII string, a CR character, and a LF character to the
@@ -322,7 +323,7 @@ namespace TrotiNet
         public uint WriteAsciiLine(string s)
         {
             uint r = WriteBinary(System.Text.Encoding.ASCII.GetBytes(s));
-            r += WriteBinary(CRLF_b);
+            r += WriteBinary(b_CRLF);
             return r;
         }
 
@@ -427,7 +428,7 @@ namespace TrotiNet
                 if (chunk_header.Length == 0)
                     throw new HttpProtocolBroken(
                         "Expected chunk header missing");
-                int sc = chunk_header.IndexOf(';');
+                int sc = chunk_header.IndexOfAny(c_ChunkSizeEnd);
                 string hexa_size;
                 if (sc > -1)
                     // We have chunk extensions: ignore them
