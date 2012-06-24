@@ -41,6 +41,12 @@ namespace TrotiNet
 #endif
 
         /// <summary>
+        /// If not null, specify which address the listening socket should
+        /// be bound to. If null, it will default to the loopback address.
+        /// </summary>
+        public IPAddress BindAddress { get; set; }
+
+        /// <summary>
         /// Timer that calls CheckSockets regularly
         /// </summary>
         Timer CleanTimer;
@@ -177,6 +183,7 @@ namespace TrotiNet
                 log.Debug("Shutting down socket");
             }
             catch (System.Net.Sockets.SocketException) { /* ignore */ }
+            catch (TrotiNet.IoBroken) { /* ignore */ }
             catch (Exception e)
             {
                 log.Error(e);
@@ -269,8 +276,9 @@ namespace TrotiNet
             // intercept initialization exceptions.
 
             // Establish the local endpoint for the socket (only on localhost)
-            IPAddress lb = UseIPv6 ? IPAddress.IPv6Loopback :
-                IPAddress.Loopback;
+            IPAddress lb = (BindAddress == null)
+                ? (UseIPv6 ? IPAddress.IPv6Loopback : IPAddress.Loopback)
+                : BindAddress;
             IPEndPoint localEndPoint = new IPEndPoint(lb, this.LocalPort);
 
             // Create a TCP/IP socket
@@ -327,6 +335,10 @@ namespace TrotiNet
             {
                 log.Error(e);
             }
+            finally
+            {
+                log.Debug("Stopped listening on port " + LocalPort);
+            }
         }
 
         void StartThread()
@@ -342,6 +354,7 @@ namespace TrotiNet
                 IsListening = false;
                 InitListenException = e;
                 InitListenFinished.Set();
+                ListenThreadSwitch.Set();
             }
             finally
             {
@@ -384,8 +397,9 @@ namespace TrotiNet
                 if (ListeningThread.ThreadState == ThreadState.WaitSleepJoin)
                     ListeningThread.Interrupt();
                 Thread.Sleep(1000);
+                ListeningThread.Abort();
             }
-            ListeningThread.Abort();
+            
             ListeningThread = null;
             IsListening = false;
 

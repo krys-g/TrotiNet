@@ -40,6 +40,27 @@ namespace TrotiNet
         bool _KeepAlive;
 
         /// <summary>
+        /// Socket-level event handler for HTTP message packets
+        /// </summary>
+        /// <param name="packet">
+        /// Buffer containing the message packet, or null if there is
+        /// no more packets in the current message
+        /// </param>
+        /// <param name="offset">
+        /// Start offset of the packet in the buffer
+        /// </param>
+        /// <param name="nb_bytes">
+        /// Fragment size in bytes, or 0 if there is no more packets
+        /// </param>
+        /// <remarks>
+        /// Messages are fragmented because of the limited buffer size, or
+        /// whenever the remote server is sending the message using the
+        /// chunked transfer encoding.
+        /// </remarks>
+        public delegate void MessagePacketHandler(byte[] packet,
+            uint offset, uint nb_bytes);
+
+        /// <summary>
         /// Wrap a Socket instance into a HttpSocket instance
         /// </summary>
         public HttpSocket(Socket socket)
@@ -270,11 +291,36 @@ namespace TrotiNet
                     ReadRaw();
                 while (AvailableData > 0)
                 {
-                    uint sent = dest.WriteRaw(Buffer, BufferPosition,
+                    uint sent = dest.WriteBinary(Buffer, BufferPosition,
                         AvailableData);
                     if (sent < AvailableData)
                         throw new IoBroken();
                     total_sent += sent;
+                    ReadRaw();
+                }
+            }
+            catch (SocketException) { /* ignore */ }
+
+            return total_sent;
+        }
+
+        /// <summary>
+        /// Transfer data from the socket to the specified packet handler
+        /// until the socket closes
+        /// </summary>
+        /// <returns>The number of bytes sent</returns>
+        public uint TunnelDataTo(MessagePacketHandler mph)
+        {
+            uint total_sent = 0;
+
+            try
+            {
+                if (AvailableData == 0)
+                    ReadRaw();
+                while (AvailableData > 0)
+                {
+                    mph(Buffer, BufferPosition, AvailableData);
+                    total_sent += AvailableData;
                     ReadRaw();
                 }
             }
@@ -290,6 +336,20 @@ namespace TrotiNet
         /// <returns>The number of bytes sent</returns>
         public uint TunnelDataTo(HttpSocket dest, uint nb_bytes)
         {
+            return TunnelDataTo((byte[] b, uint o, uint s) =>
+            {
+                if (dest.WriteBinary(b, o, s) < s)
+                    throw new IoBroken();
+            }, nb_bytes);
+        }
+
+        /// <summary>
+        /// Read <c>nb_bytes</c> bytes from the socket,
+        /// and send it to the specified packet handler
+        /// </summary>
+        /// <returns>The number of bytes sent</returns>
+        public uint TunnelDataTo(MessagePacketHandler mph, uint nb_bytes)
+        {
             uint total_sent = 0;
             while (nb_bytes > 0)
             {
@@ -302,14 +362,97 @@ namespace TrotiNet
                     UseLeftOverBytes = true;
                     to_send = nb_bytes;
                 }
-                uint sent = dest.WriteRaw(Buffer, BufferPosition, to_send);
-                if (sent < to_send)
-                    throw new IoBroken();
-                total_sent += sent;
-                nb_bytes -= sent;
-                AvailableData -= sent;
-                BufferPosition += sent;
+                mph(Buffer, BufferPosition, to_send);
+                total_sent += to_send;
+                nb_bytes -= to_send;
+                AvailableData -= to_send;
+                BufferPosition += to_send;
             }
+
+            return total_sent;
+        }
+
+        /// <summary>
+        /// Sends a buffer to the specified packet handler
+        /// </summary>
+        /// <returns>The number of bytes sent</returns>
+        public uint TunnelDataTo(MessagePacketHandler mph, byte[] buffer)
+        {
+            mph(buffer, 0, (uint)buffer.Length);
+            return (uint)buffer.Length;
+        }
+
+        /// <summary>
+        /// Fills the buffer with an unknown amount of data from the socket
+        /// </summary>
+        /// <param name="buffer">data from the socket</param>
+        /// <returns>total bytes</returns>
+        public uint TunnelDataTo(ref byte[] buffer)
+        {
+            uint total_sent = 0;
+            uint byte_count = 512;
+
+            if (buffer == null)
+                buffer = new byte[byte_count];
+
+            while (true)
+            {
+                if (AvailableData == 0)
+                    if (ReadRaw() == 0)
+                    {
+                        break;
+                    }
+
+                uint to_send = AvailableData;
+                UseLeftOverBytes = true;
+
+                if (total_sent + AvailableData > buffer.Length)
+                {
+                    buffer = new byte[(total_sent + AvailableData) * 2];
+                }
+
+                System.Buffer.BlockCopy(Buffer, (int)BufferPosition, buffer,
+                    (int)total_sent, (int)to_send);
+
+                total_sent += to_send;
+                AvailableData -= to_send;
+                BufferPosition += to_send;
+            }
+
+            byte[] file_data = new byte[total_sent];
+            System.Buffer.BlockCopy(buffer, 0, file_data, 0, (int)total_sent);
+            buffer = file_data;
+
+            return total_sent;
+        }
+
+        /// <summary>
+        /// Write data from a buffer to the socket
+        /// </summary>
+        public uint TunnelDataTo(byte[] buffer, uint byte_count)
+        {
+            uint total_sent = 0;
+            while (byte_count > 0)
+            {
+                if (AvailableData == 0)
+                    if (ReadRaw() == 0)
+                        throw new IoBroken();
+                uint to_send = AvailableData;
+                if (to_send > byte_count)
+                {
+                    UseLeftOverBytes = true;
+                    to_send = byte_count;
+                }
+
+                System.Buffer.BlockCopy(Buffer, (int)BufferPosition, buffer,
+                    (int)total_sent, (int)to_send);
+
+                total_sent += to_send;
+                byte_count -= to_send;
+                AvailableData -= to_send;
+                BufferPosition += to_send;
+            }
+
             return total_sent;
         }
 
@@ -332,7 +475,7 @@ namespace TrotiNet
         /// </summary>
         public uint WriteBinary(byte[] b)
         {
-            return WriteRaw(b, 0, (uint)b.Length);
+            return WriteBinary(b, 0, (uint)b.Length);
         }
 
         /// <summary>
@@ -341,14 +484,14 @@ namespace TrotiNet
         /// </summary>
         public uint WriteBinary(byte[] b, uint nb_bytes)
         {
-            return WriteRaw(b, 0, nb_bytes);
+            return WriteBinary(b, 0, nb_bytes);
         }
 
         /// <summary>
         /// Write <c>nb_bytes</c> of <c>b</c>, starting at offset
         /// <c>offset</c> to the socket
         /// </summary>
-        protected uint WriteRaw(byte[] b, uint offset, uint nb_bytes)
+        public uint WriteBinary(byte[] b, uint offset, uint nb_bytes)
         {
             int r = LowLevelSocket.Send(b, (int)offset, (int)nb_bytes,
                 SocketFlags.None);
@@ -414,12 +557,36 @@ namespace TrotiNet
         /// <summary>
         /// Tunnel a HTTP-chunked blob of data
         /// </summary>
+        /// <param name="dest">The destination socket</param>
         /// <remarks>
         /// The tunneling stops when the last chunk, identified by a
         /// size of 0, arrives. The optional trailing entities are also
         /// transmitted (but otherwise ignored).
         /// </remarks>
         public void TunnelChunkedDataTo(HttpSocket dest)
+        {
+            TunnelChunkedDataTo(dest, (byte[] b, uint o, uint s) =>
+                {
+                    if (dest.WriteBinary(b, o, s) < s)
+                        throw new IoBroken();
+                });
+        }
+
+        /// <summary>
+        /// Tunnel a HTTP-chunked blob of data to the specified packet handler
+        /// </summary>
+        /// <remarks>
+        /// The tunneling stops when the last chunk, identified by a
+        /// size of 0, arrives. The optional trailing entities are also
+        /// transmitted (but otherwise ignored).
+        /// </remarks>
+        public void TunnelChunkedDataTo(MessagePacketHandler mph)
+        {
+            TunnelChunkedDataTo(null, mph);
+        }
+
+        /* Helper function */
+        void TunnelChunkedDataTo(HttpSocket dest, MessagePacketHandler mph)
         {
             // (RFC 2616, sections 3.6.1, 19.4.6)
             while (true)
@@ -449,21 +616,24 @@ namespace TrotiNet
                         "Could not parse chunk size in: " + s);
                 }
 
-                dest.WriteAsciiLine(chunk_header);
+                if (dest != null)
+                    dest.WriteAsciiLine(chunk_header);
                 if (size == 0)
                     break;
-                TunnelDataTo(dest, size);
+                TunnelDataTo(mph, size);
                 // Read/write one more CRLF
                 string new_line = ReadAsciiLine();
                 System.Diagnostics.Debug.Assert(new_line.Length == 0);
-                dest.WriteAsciiLine(new_line);
+                if (dest != null)
+                    dest.WriteAsciiLine(new_line);
             }
             string line;
             do
             {
                 // Tunnel any trailing entity headers
                 line = ReadAsciiLine();
-                dest.WriteAsciiLine(line);
+                if (dest != null)
+                    dest.WriteAsciiLine(line);
             } while (line.Length != 0);
         }
 

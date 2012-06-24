@@ -2,10 +2,10 @@
 MSBUILD:=xbuild
 MSBUILD_OPT:=/nologo /verbosity:quiet
 BUILD_OPT:=/p:Platform="Any CPU" /p:Configuration=Release
-NUNIT:=/cygdrive/c/Program Files/NUnit 2.5.10/bin/net-2.0/nunit-console-x86.exe
-VERSION:=0.6.5
+NUNIT:=/cygdrive/c/Program Files/NUnit 2.6/bin/nunit-console-x86.exe
+VERSION:=0.6.8
 
-compile: 
+compile:
 	@"${MSBUILD}" ${MSBUILD_OPT} ${BUILD_OPT}
 
 clean:
@@ -14,8 +14,8 @@ clean:
 
 release: set_version compile
 	@mkdir -p Release/TrotiNet-${VERSION}
-	@cp Lib/bin/Release/{log4net.dll,TrotiNet.{dll,xml}} \
-          Release/TrotiNet-${VERSION}/
+	@cp Lib/bin/Release/log4net.dll Lib/bin/Release/TrotiNet.dll \
+	    Lib/bin/Release/TrotiNet.xml Release/TrotiNet-${VERSION}/
 	@cd Release && zip -r TrotiNet-${VERSION}.zip TrotiNet-${VERSION}
 	@rm -fr Release/TrotiNet-${VERSION}
 	@echo "Created Release/TrotiNet-${VERSION}.zip"
@@ -29,4 +29,4 @@ test: compile
 	@"${NUNIT}" Test\\bin\\Release\\TrotiNet.Test.dll
 	@rm TestResult.xml
 
-.PHONY: compile clean distclean release        
+.PHONY: compile clean distclean release

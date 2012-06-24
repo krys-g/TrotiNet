@@ -41,14 +41,30 @@ namespace TrotiNet
         public string ProxyServer;
 
         /// <summary>
+        /// Correspond to the system/IE advanced option "Use Automatic
+        /// Configuration Script."  
+        /// </summary>
+        public string AutoConfigURL;
+
+        /// <summary>
         /// Constructor
         /// </summary>
         public SystemProxySettings(bool proxyEnable,
-            string proxyServer, string proxyOverride)
+            string proxyServer, string proxyOverride, string autoConfigURL)
         {
             ProxyEnable = proxyEnable;
             ProxyServer = proxyServer;
             ProxyOverride = proxyOverride;
+            AutoConfigURL = autoConfigURL;
+        }
+
+        /// <summary>
+        /// Constructor with default (empty) auto config URL
+        /// </summary>
+        public SystemProxySettings(bool proxyEnable,
+            string proxyServer, string proxyOverride) :
+            this(proxyEnable, proxyServer, proxyOverride, null)
+        {
         }
 
         /// <summary>

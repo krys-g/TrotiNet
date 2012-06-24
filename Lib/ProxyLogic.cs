@@ -1,6 +1,9 @@
 ﻿using System;
+using System.IO;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using log4net;
 
 namespace TrotiNet
@@ -206,9 +209,9 @@ namespace TrotiNet
                 System.Diagnostics.Debug.Assert(bIsConnect);
             }
             else
-            if (slash > 0) // Strict inequality
-                // case 2
-                authority = hrl.URI.Substring(prefix, slash - prefix);
+                if (slash > 0) // Strict inequality
+                    // case 2
+                    authority = hrl.URI.Substring(prefix, slash - prefix);
 
             if (authority != null)
             {
@@ -266,7 +269,7 @@ namespace TrotiNet
                 return host;
             }
 
-            hostname_from_header:
+        hostname_from_header:
             host = hh_rq.Host;
             if (host == null)
                 throw new HttpProtocolBroken("No host specified");
@@ -283,7 +286,10 @@ namespace TrotiNet
             return host;
         }
 
-        abstract internal bool LogicLoop();
+        /// <summary>
+        /// Entry point to HTTP request handling
+        /// </summary>
+        abstract public bool LogicLoop();
 
         /// <summary>
         /// In case of a proxy chain, set the next proxy to contact
@@ -304,6 +310,28 @@ namespace TrotiNet
                 out RelayHttpProxyPort);
             RelayHttpProxyOverride = null;
         }
+
+        /// <summary>
+        /// Message packet handler for tunneling data from PS to BP
+        /// </summary>
+        protected void TunnelBP(byte[] msg, uint position, uint to_send)
+        {
+            if (to_send == 0)
+                return;
+            if (SocketBP.WriteBinary(msg, position, to_send) < to_send)
+                throw new IoBroken();
+        }
+
+        /// <summary>
+        /// Message packet handler for tunneling data from BP to PS
+        /// </summary>
+        protected void TunnelPS(byte[] msg, uint position, uint to_send)
+        {
+            if (to_send == 0)
+                return;
+            if (SocketPS.WriteBinary(msg, position, to_send) < to_send)
+                throw new IoBroken();
+        }
     }
 
     /// <summary>
@@ -313,7 +341,11 @@ namespace TrotiNet
     {
         static readonly ILog log = Log.Get();
 
-        internal BaseProxyLogic(HttpSocket socketBP): base(socketBP) { }
+        /// <summary>
+        /// Base proxy constructor (an arbitrary intermediate step between
+        /// AbstractProxyLogic, and ProxyLogic)
+        /// </summary>
+        public BaseProxyLogic(HttpSocket socketBP) : base(socketBP) { }
 
         /// <summary>
         /// Continuation delegate used in the request processing pipeline
@@ -348,14 +380,20 @@ namespace TrotiNet
         {
             /// <summary>
             /// Whether the BP connection should be kept alive after handling
-            /// the current request
+            /// the current request, or closed
             /// </summary>
             public bool bPersistConnectionBP;
 
             /// <summary>
             /// Whether the PS connection should be kept alive after handling
-            /// the current request
+            /// the current request, or closed
             /// </summary>
+            /// <remarks>
+            /// If set to false, then <c>bPersistConnectionBP</c> will also be
+            /// set to false, because if no Content-Length has been specified,
+            /// the browser would keep on waiting (BP kept-alive, but PS
+            /// closed).
+            /// </remarks>
             public bool bPersistConnectionPS;
 
             /// <summary>
@@ -379,6 +417,20 @@ namespace TrotiNet
             /// about whether the BP connection should persist
             /// </summary>
             public bool bUseDefaultPersistBP;
+
+            /// <summary>
+            /// When set to not null, will be called every time a raw fragment
+            /// of a non-empty response message body is received; note that the
+            /// packet handler becomes responsible for sending the response
+            /// (whatever it is) to SocketBP
+            /// </summary>
+            /// <remarks>
+            /// The message body might be compressed (or otherwise modified),
+            /// as specified by the Content-Encoding header. Applications
+            /// should use <c>ProxyLogic.GetResponseMessageStream</c> to
+            /// decompress (whenever necessary) the message stream.
+            /// </remarks>
+            public HttpSocket.MessagePacketHandler OnResponseMessagePacket;
 
             /// <summary>
             /// Points to the next processing step; must be updated after
@@ -419,7 +471,11 @@ namespace TrotiNet
             State.NextStep = null;
         }
 
-        override internal bool LogicLoop()
+        /// <summary>
+        /// Implement a base proxy logic. The procedure is called for each
+        /// request as long as it returns true.
+        /// </summary>
+        override public bool LogicLoop()
         {
             // In order to enable derived classes to divert the standard
             // HTTP request processing in the most flexible way, the processing
@@ -505,44 +561,45 @@ namespace TrotiNet
             // 1) find out where we should connect
             // 2) find out whether there is a message body in the request
             // 3) find out whether the BP connection should be kept-alive
-
-            // Step 1)
-            if (RelayHttpProxyHost == null)
+            if (State.NextStep != null)
             {
-                int NewDestinationPort;
-                string NewDestinationHost = ParseDestinationHostAndPort(
-                    RequestLine, RequestHeaders, out NewDestinationPort);
-                Connect(NewDestinationHost, NewDestinationPort);
-            }
-            else
-                Connect(RelayHttpProxyHost, RelayHttpProxyPort);
+                // Step 1)
+                if (RelayHttpProxyHost == null)
+                {
+                    int NewDestinationPort;
+                    string NewDestinationHost = ParseDestinationHostAndPort(
+                        RequestLine, RequestHeaders, out NewDestinationPort);
+                    Connect(NewDestinationHost, NewDestinationPort);
+                }
+                else
+                    Connect(RelayHttpProxyHost, RelayHttpProxyPort);
 
-            // Step 2)
-            // Find out whether the request has a message body
-            // (RFC 2616, section 4.3); if it has, get the message length
-            State.bRequestHasMessage = false;
-            State.RequestMessageLength = 0;
-            State.bRequestMessageChunked = false;
-            if (RequestHeaders.TransferEncoding != null)
-            {
-                State.bRequestHasMessage = true;
-                State.bRequestMessageChunked = Array.IndexOf<string>(
-                 RequestHeaders.TransferEncoding, "chunked") >= 0;
-                System.Diagnostics.Debug.Assert(
-                    State.bRequestMessageChunked);
-            }
-            else
-            if (RequestHeaders.ContentLength != null)
-            {
-                State.RequestMessageLength =
-                    (uint)RequestHeaders.ContentLength;
-
-                // Note: HTTP 1.0 wants "Content-Length: 0" when there
-                // is no entity body. (RFC 1945, section 7.2)
-                if (State.RequestMessageLength > 0)
+                // Step 2)
+                // Find out whether the request has a message body
+                // (RFC 2616, section 4.3); if it has, get the message length
+                State.bRequestHasMessage = false;
+                State.RequestMessageLength = 0;
+                State.bRequestMessageChunked = false;
+                if (RequestHeaders.TransferEncoding != null)
+                {
                     State.bRequestHasMessage = true;
-            }
+                    State.bRequestMessageChunked = Array.IndexOf<string>(
+                     RequestHeaders.TransferEncoding, "chunked") >= 0;
+                    System.Diagnostics.Debug.Assert(
+                        State.bRequestMessageChunked);
+                }
+                else
+                if (RequestHeaders.ContentLength != null)
+                {
+                    State.RequestMessageLength =
+                        (uint)RequestHeaders.ContentLength;
 
+                    // Note: HTTP 1.0 wants "Content-Length: 0" when there
+                    // is no entity body. (RFC 1945, section 7.2)
+                    if (State.RequestMessageLength > 0)
+                        State.bRequestHasMessage = true;
+                }
+            }
             // Step 3)
             State.bUseDefaultPersistBP = true;
             if (RequestHeaders.ProxyConnection != null)
@@ -591,7 +648,7 @@ namespace TrotiNet
                 {
                     System.Diagnostics.Debug.Assert(
                         State.RequestMessageLength > 0);
-                    SocketBP.TunnelDataTo(SocketPS, State.RequestMessageLength);
+                    SocketBP.TunnelDataTo(TunnelPS, State.RequestMessageLength);
                 }
             }
 
@@ -633,6 +690,8 @@ namespace TrotiNet
 
             if (State.bPersistConnectionPS)
                 SocketPS.KeepAlive = true;
+            else
+                State.bPersistConnectionBP = false;
 
             State.NextStep = SendResponse;
             OnReceiveResponse();
@@ -644,16 +703,24 @@ namespace TrotiNet
         /// </summary>
         protected virtual void SendResponse()
         {
-            // Transmit the response header to the client
-            ResponseStatusLine.SendTo(SocketBP);
-            ResponseHeaders.SendTo(SocketBP);
-
+            if (!(ResponseHeaders.TransferEncoding == null && 
+                  ResponseHeaders.ContentLength == null))
+            {
+                // Transmit the response header to the client
+                ResponseStatusLine.SendTo(SocketBP);
+                ResponseHeaders.SendTo(SocketBP);
+            }
+           
             // Find out if there is a message body
             // (RFC 2616, section 4.4)
             int sc = ResponseStatusLine.StatusCode;
             if (RequestLine.Method.Equals("HEAD") ||
                 sc == 204 || sc == 304 || (sc >= 100 && sc <= 199))
+            {
+                ResponseStatusLine.SendTo(SocketBP);
+                ResponseHeaders.SendTo(SocketBP);
                 goto no_message_body;
+            }
 
             bool bResponseMessageChunked = false;
             uint ResponseMessageLength = 0;
@@ -666,31 +733,63 @@ namespace TrotiNet
                     bResponseMessageChunked);
             }
             else
-            if (ResponseHeaders.ContentLength != null)
+                if (ResponseHeaders.ContentLength != null)
+                {
+                    ResponseMessageLength =
+                        (uint)ResponseHeaders.ContentLength;
+                    if (ResponseMessageLength == 0)
+                        goto no_message_body;
+                }
+                else
+                {
+                    // We really should have been given a response
+                    // length.  It appears that some popular websites
+                    // send small files without a transfer-encoding
+                    // or length.
+
+                    // It seems that all of the browsers handle this
+                    // case so we need to as well.  
+
+                    byte[] buffer = new byte[512];
+                    SocketPS.TunnelDataTo(ref buffer);
+
+                    // Transmit the response header to the client
+                    ResponseHeaders.ContentLength = (uint)buffer.Length;
+                    ResponseStatusLine.SendTo(SocketBP);
+                    ResponseHeaders.SendTo(SocketBP);
+
+                    SocketBP.TunnelDataTo(TunnelBP, buffer);
+                    State.NextStep = null;
+                    return;
+                }
+
+            if (State.OnResponseMessagePacket != null)
             {
-                ResponseMessageLength =
-                    (uint)ResponseHeaders.ContentLength;
-                if (ResponseMessageLength == 0)
-                    goto no_message_body;
+                if (!State.bPersistConnectionPS)
+                    // Pipeline until the connection is closed
+                    SocketPS.TunnelDataTo(State.OnResponseMessagePacket);
+                else
+                    if (bResponseMessageChunked)
+                        SocketPS.TunnelChunkedDataTo(
+                            State.OnResponseMessagePacket);
+                    else
+                        SocketPS.TunnelDataTo(State.OnResponseMessagePacket,
+                            ResponseMessageLength);
+                State.OnResponseMessagePacket(null, 0, 0);
             }
             else
             {
-                // If the connection is not being closed,
-                // we need a content length.
-                System.Diagnostics.Debug.Assert(
-                    !State.bPersistConnectionPS);
+                if (!State.bPersistConnectionPS)
+                    // Pipeline until the connection is closed
+                    SocketPS.TunnelDataTo(TunnelBP);
+                else
+                    if (bResponseMessageChunked)
+                        SocketPS.TunnelChunkedDataTo(SocketBP);
+                    else
+                        SocketPS.TunnelDataTo(TunnelBP, ResponseMessageLength);
             }
 
-            if (!State.bPersistConnectionPS)
-                // Pipeline until the connection is closed
-                SocketPS.TunnelDataTo(SocketBP);
-            else
-            if (bResponseMessageChunked)
-                SocketPS.TunnelChunkedDataTo(SocketBP);
-            else
-                SocketPS.TunnelDataTo(SocketBP, ResponseMessageLength);
-
-            no_message_body:
+        no_message_body:
 
             if (!State.bPersistConnectionPS && SocketPS != null)
             {
@@ -703,15 +802,15 @@ namespace TrotiNet
     }
 
     /// <summary>
-    /// Transparent proxy that tunnels HTTP requests (mostly) unchanged
+    /// Wrapper around BaseProxyLogic that adds various utility functions
     /// </summary>
-    public class ProxyLogic : BaseProxyLogic
+    public class ProxyLogic: BaseProxyLogic
     {
         /// <summary>
         /// Instantiate a transparent proxy
         /// </summary>
         /// <param name="socketBP">Client browser-proxy socket</param>
-        public ProxyLogic(HttpSocket socketBP): base(socketBP) { }
+        public ProxyLogic(HttpSocket socketBP) : base(socketBP) { }
 
         /// <summary>
         /// Static constructor
@@ -758,6 +857,140 @@ namespace TrotiNet
                 RequestHeaders.Host = host;
             }
         }
+
+        /// <summary>
+        /// Interpret a message with respect to its content encoding
+        /// </summary>
+        public Stream GetResponseMessageStream(byte[] msg)
+        {
+            Stream inS = new MemoryStream(msg);
+            return GetResponseMessageStream(inS);
+        }
+
+        /// <summary>
+        /// Interpret a message with respect to its content encoding
+        /// </summary>
+        public Stream GetResponseMessageStream(Stream inS)
+        {
+            Stream outS = null;
+            string ce = ResponseHeaders.ContentEncoding;
+            if (!String.IsNullOrEmpty(ce))
+            {
+                if (ce.StartsWith("deflate"))
+                    outS = new DeflateStream(inS, CompressionMode.Decompress);
+                else
+                    if (ce.StartsWith("gzip"))
+                        outS = new GZipStream(inS, CompressionMode.Decompress);
+                    else
+                        if (!ce.StartsWith("identity"))
+                            throw new TrotiNet.RuntimeException(
+                                "Unsupported Content-Encoding '" + ce + "'");
+            }
+
+            if (outS == null)
+                return inS;
+            return outS;
+        }
+
+        /// <summary>
+        /// Compress a byte array based on the content encoding header
+        /// </summary>
+        /// <param name="output">The array to be compressed</param>
+        /// <returns>The compressed array</returns>
+        public byte[] CompressResponse(byte[] output)
+        {
+            string ce = ResponseHeaders.ContentEncoding;
+            if (!String.IsNullOrEmpty(ce))
+            {
+                if (ce.StartsWith("deflate"))
+                {
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        using (DeflateStream ds = new DeflateStream(ms, 
+                            CompressionMode.Compress, true))
+                        {
+                            ds.Write(output, 0, output.Length);
+                            ds.Close();
+                        }
+                        return ms.ToArray();
+                    }
+                }
+                else
+                {
+                    if (ce.StartsWith("gzip"))
+                    {
+                        using (MemoryStream ms = new MemoryStream())
+                        {
+                            using (GZipStream gs = new GZipStream(ms, 
+                                CompressionMode.Compress, true))
+                            {
+                                gs.Write(output, 0, output.Length);
+                                gs.Close();
+                            }
+                            return ms.ToArray();
+                        }
+                    }
+                    else
+                    {
+                        if (!ce.StartsWith("identity"))
+                            throw new TrotiNet.RuntimeException(
+                                "Unsupported Content-Encoding '" + ce + "'");
+                    }
+                }
+            }
+
+            return output;
+        }
+
+        /// <summary>
+        /// Get an encoded byte array for a given string
+        /// </summary>
+        public byte[] EncodeStringResponse(string s, Encoding encoding)
+        {
+            byte[] output = encoding.GetBytes(s);
+
+            string ce = ResponseHeaders.ContentEncoding;
+            if (!String.IsNullOrEmpty(ce))
+            {
+                if (ce.StartsWith("deflate"))
+                {
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        using (DeflateStream ds = new DeflateStream(ms, 
+                            CompressionMode.Compress, true))
+                        {
+                            ds.Write(output, 0, output.Length);
+                            ds.Close();
+                        }
+                        return ms.ToArray();
+                    }
+                }
+                else
+                {
+                    if (ce.StartsWith("gzip"))
+                    {
+                        using (MemoryStream ms = new MemoryStream())
+                        {
+                            using (GZipStream gs = new GZipStream(ms, 
+                                CompressionMode.Compress, true))
+                            {
+                                gs.Write(output, 0, output.Length);
+                                gs.Close();
+                            }
+                            return ms.ToArray();
+                        }
+                    }
+                    else
+                    {
+                        if (!ce.StartsWith("identity"))
+                            throw new TrotiNet.RuntimeException(
+                                "Unsupported Content-Encoding '" + ce + "'");
+                    }
+                }
+            }
+
+            return output;
+        }
     }
 
     /// <summary>
@@ -797,7 +1030,10 @@ namespace TrotiNet
             return new ProxyDummyEcho(socketBP, false);
         }
 
-        override internal bool LogicLoop()
+        /// <summary>
+        /// Dummy logic loop, for test purposes
+        /// </summary>
+        override public bool LogicLoop()
         {
             uint r = SocketBP.ReadBinary();
             if (r == 0)
