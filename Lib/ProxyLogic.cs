@@ -584,7 +584,7 @@ namespace TrotiNet
                 {
                     State.bRequestHasMessage = true;
                     State.bRequestMessageChunked = Array.IndexOf<string>(
-                     RequestHeaders.TransferEncoding, "chunked") >= 0;
+                        RequestHeaders.TransferEncoding, "chunked") >= 0;
                     System.Diagnostics.Debug.Assert(
                         State.bRequestMessageChunked);
                 }

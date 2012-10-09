@@ -3,7 +3,7 @@ MSBUILD:=xbuild
 MSBUILD_OPT:=/nologo /verbosity:quiet
 BUILD_OPT:=/p:Platform="Any CPU" /p:Configuration=Release
 NUNIT:=/cygdrive/c/Program Files/NUnit 2.6/bin/nunit-console-x86.exe
-VERSION:=0.6.8
+VERSION:=0.7.0
 
 compile:
 	@"${MSBUILD}" ${MSBUILD_OPT} ${BUILD_OPT}

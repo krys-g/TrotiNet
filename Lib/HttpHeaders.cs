@@ -141,9 +141,12 @@ namespace TrotiNet
                 if (iSplit <= 0)
                     throw new HttpProtocolBroken("No colon in HTTP header");
 
-                line = line.ToLower();
-                string HeaderName = line.Substring(0, iSplit).Trim();
+                // Header names are case-insensitive, but only some header 
+                // values are.
+                string HeaderName = line.Substring(0, iSplit).Trim().ToLower();
                 string HeaderValue = line.Substring(iSplit + 1).Trim();
+                if (IsHeaderValueCaseInsensitive(HeaderName))
+                    HeaderValue = HeaderValue.ToLower();
 
                 string previous_value = null;
                 if (Headers.TryGetValue(HeaderName, out previous_value))
@@ -263,6 +266,22 @@ namespace TrotiNet
             catch { return null; }
         }
 
+        bool IsHeaderValueCaseInsensitive(string HeaderName)
+        {
+            // Note: some other headers may be case-insensitive, but
+            // the ones listed here really have to be lowerized,
+            // because TrotiNet assumes so.
+
+            System.Diagnostics.Debug.Assert(HeaderName.Equals(
+                HeaderName.ToLower()));
+
+            return
+                HeaderName.Equals("connection") ||
+                HeaderName.Equals("content-encoding") ||
+                HeaderName.Equals("proxy-connection") ||
+                HeaderName.Equals("transfer-encoding");
+        }
+
         internal void SendTo(HttpSocket hs)
         {
             hs.WriteAsciiLine(HeadersInOrder);
@@ -341,7 +360,7 @@ namespace TrotiNet
             else
                 HeadersInOrder += HeaderName + ": " + s + "\r\n";
         }
-        static readonly string[] CRLF_a = { "\r\n" };
 
+        static readonly string[] CRLF_a = { "\r\n" };
     }
 }
