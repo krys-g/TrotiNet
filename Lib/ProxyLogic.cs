@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
@@ -280,8 +280,8 @@ namespace TrotiNet
                 host = host.TrimEnd('/');
             else
             {
-                host = host.Substring(0, cp);
                 port = int.Parse(host.Substring(cp + 1));
+                host = host.Substring(0, cp);
             }
             return host;
         }
@@ -543,11 +543,12 @@ namespace TrotiNet
             RequestHeaders = new HttpHeaders(SocketBP);
 
             if (RequestLine.Method.Equals("CONNECT"))
-            {
-                log.Debug("Method CONNECT not implemented");
-                SocketBP.Send501();
-                AbortRequest();
-                return;
+            {                
+                State.NextStep = SendSSLConfirmResponse;
+            }
+            else
+            {                
+                State.NextStep = SendRequest;
             }
 
             log.Info("Got request " + RequestLine.RequestLine);
@@ -654,6 +655,40 @@ namespace TrotiNet
 
             State.NextStep = ReadResponse;
         }
+
+
+        ///Response To Client a 200 Http Header to Confirm SSL Links
+        protected virtual void SendSSLConfirmResponse()
+        {
+            SocketBP.SendConnectedEstablished(RequestLine.ProtocolVersion);
+            State.NextStep = LinkSSLTunnel;
+        }
+
+
+        ///Loop And Try To SendTunnels For SSL RequestAndResponse
+        IAsyncResult SSLAsyncBP = null;
+        IAsyncResult SSLAsyncPS = null;
+        protected virtual void LinkSSLTunnel()
+        {
+            if (SSLAsyncBP == null || SSLAsyncBP.IsCompleted) 
+                SSLAsyncBP = SocketBP.TunnelDataAsyncTo(SocketPS);
+            if (SSLAsyncPS == null || SSLAsyncPS.IsCompleted) 
+                SSLAsyncPS = SocketPS.TunnelDataAsyncTo(SocketBP);
+            while (!SSLAsyncBP.IsCompleted && !SSLAsyncPS.IsCompleted)
+            {
+                System.Threading.Thread.Sleep(1);
+            }
+            bool Finished = SocketPS.IsSocketDead() || SocketBP.IsSocketDead();
+            if (!Finished)
+            {
+                State.NextStep = LinkSSLTunnel;
+            }
+            else
+            {
+                State.NextStep = null;
+            }
+        }
+
 
         /// <summary>
         /// Pipeline step: read the HTTP response from the local client,
