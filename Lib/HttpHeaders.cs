@@ -19,6 +19,15 @@ namespace TrotiNet
         }
 
         /// <summary>
+        /// Cache-Control header value
+        /// </summary>
+        public string CacheControl
+        {
+            get { return GetItem<string>("Cache-Control"); }
+            set { SetItem("Cache-Control", value, HeaderType.String); }
+        }
+
+        /// <summary>
         /// Connection header value
         /// </summary>
         public string[] Connection
@@ -43,6 +52,24 @@ namespace TrotiNet
         {
             get { return GetItem<uint?>("content-length"); }
             set { SetItem("Content-Length", value, HeaderType.Uint); }
+        }
+
+        /// <summary>
+        /// Expires header value
+        /// </summary>
+        public string Expires
+        {
+            get { return GetItem<string>("Expires"); }
+            set { SetItem("Expires", value, HeaderType.String); }
+        }
+
+        /// <summary>
+        /// Pragma header value
+        /// </summary>
+        public string Pragma
+        {
+            get { return GetItem<string>("Pragma"); }
+            set { SetItem("Pragma", value, HeaderType.String); }
         }
 
         /// <summary>

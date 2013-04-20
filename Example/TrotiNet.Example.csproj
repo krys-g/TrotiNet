@@ -41,6 +41,9 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="RedirectingProxy.cs" />
+    <Compile Include="RewritingProxy.cs" />
+    <Compile Include="TransparentProxy.cs" />
     <Compile Include="Utils.cs" />
   </ItemGroup>
   <ItemGroup>

@@ -4,7 +4,7 @@ using log4net;
 
 namespace TrotiNet
 {
-    class Log
+    internal class Log
     {
         /// <summary>
         /// Create a class logger

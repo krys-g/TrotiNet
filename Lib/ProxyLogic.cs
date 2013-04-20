@@ -703,22 +703,20 @@ namespace TrotiNet
         /// </summary>
         protected virtual void SendResponse()
         {
-            if (!(ResponseHeaders.TransferEncoding == null && 
+            if (!(ResponseHeaders.TransferEncoding == null &&
                   ResponseHeaders.ContentLength == null))
             {
                 // Transmit the response header to the client
-                ResponseStatusLine.SendTo(SocketBP);
-                ResponseHeaders.SendTo(SocketBP);
+                SendResponseStatusAndHeaders();
             }
-           
+
             // Find out if there is a message body
             // (RFC 2616, section 4.4)
             int sc = ResponseStatusLine.StatusCode;
             if (RequestLine.Method.Equals("HEAD") ||
                 sc == 204 || sc == 304 || (sc >= 100 && sc <= 199))
             {
-                ResponseStatusLine.SendTo(SocketBP);
-                ResponseHeaders.SendTo(SocketBP);
+                SendResponseStatusAndHeaders();
                 goto no_message_body;
             }
 
@@ -743,12 +741,12 @@ namespace TrotiNet
                 else
                 {
                     // We really should have been given a response
-                    // length.  It appears that some popular websites
+                    // length. It appears that some popular websites
                     // send small files without a transfer-encoding
                     // or length.
 
                     // It seems that all of the browsers handle this
-                    // case so we need to as well.  
+                    // case so we need to as well.
 
                     byte[] buffer = new byte[512];
                     SocketPS.TunnelDataTo(ref buffer);
@@ -798,6 +796,16 @@ namespace TrotiNet
             }
 
             State.NextStep = null;
+        }
+
+        /// <summary>
+        /// Send the response status line and headers from the proxy to
+        /// the client
+        /// </summary>
+        protected void SendResponseStatusAndHeaders()
+        {
+            ResponseStatusLine.SendTo(SocketBP);
+            ResponseHeaders.SendTo(SocketBP);
         }
     }
 
@@ -859,6 +867,121 @@ namespace TrotiNet
         }
 
         /// <summary>
+        /// Download the chunked file and return the byte array
+        /// </summary>
+        byte[] GetChunkedContent()
+        {
+            char[] c_ChunkSizeEnd = { ' ', ';' };
+            MemoryStream chunked_stream = new MemoryStream();
+            StreamWriter chunked_writer = new StreamWriter(chunked_stream);
+
+            // (RFC 2616, sections 3.6.1, 19.4.6)
+            while (true)
+            {
+                string chunk_header = SocketPS.ReadAsciiLine();
+
+                if (string.IsNullOrEmpty(chunk_header))
+                    continue;
+
+                int sc = chunk_header.IndexOfAny(c_ChunkSizeEnd);
+                string hexa_size;
+                if (sc > -1)
+                    // We have chunk extensions: ignore them
+                    hexa_size = chunk_header.Substring(0, sc);
+                else
+                    hexa_size = chunk_header;
+
+                uint size;
+                try
+                {
+                    size = Convert.ToUInt32(hexa_size, 16);
+                }
+                catch
+                {
+                    string s = chunk_header.Length > 20
+                        ? (chunk_header.Substring(0, 17) + "...")
+                        : chunk_header;
+                    throw new HttpProtocolBroken(
+                        "Could not parse chunk size in: " + s);
+                }
+
+                if (size == 0)
+                    break;
+
+                byte[] buffer = new byte[size];
+                SocketPS.TunnelDataTo(buffer, size);
+
+                chunked_stream.Write(buffer, 0, (int)size);
+            }
+
+            return chunked_stream.ToArray();
+        }
+
+        /// <summary>
+        /// Get a file with a known file size (i.e., not chunked).
+        /// </summary>
+        byte[] GetNonChunkedContent()
+        {
+            // Find out if there is a message body
+            // (RFC 2616, section 4.4)
+            int sc = ResponseStatusLine.StatusCode;
+            if (RequestLine.Method.Equals("HEAD") ||
+                sc == 204 || sc == 304 || (sc >= 100 && sc <= 199))
+                return new byte[0];
+
+            bool bResponseMessageChunked = false;
+            uint ResponseMessageLength = 0;
+            if (ResponseHeaders.TransferEncoding != null)
+            {
+                bResponseMessageChunked = Array.IndexOf<string>(
+                    ResponseHeaders.TransferEncoding, "chunked") >= 0;
+                System.Diagnostics.Debug.Assert(bResponseMessageChunked);
+                if (bResponseMessageChunked)
+                    throw new TrotiNet.RuntimeException(
+                        "Chunked data found when not expected");
+            }
+
+            if (ResponseHeaders.ContentLength != null)
+            {
+                ResponseMessageLength =
+                    (uint)ResponseHeaders.ContentLength;
+
+                if (ResponseMessageLength == 0)
+                    return new byte[0];
+            }
+            else
+            {
+                // If the connection is not being closed,
+                // we need a content length.
+                System.Diagnostics.Debug.Assert(
+                    !State.bPersistConnectionPS);
+            }
+
+            byte[] buffer = new byte[ResponseMessageLength];
+            SocketPS.TunnelDataTo(buffer, ResponseMessageLength);
+
+            return buffer;
+        }
+
+        /// <summary>
+        /// If this method is called on a response, either the custom
+        /// response pipeline or the 302 redirect MUST be used.
+        /// </summary>
+        protected byte[] GetContent()
+        {
+            byte[] content = null;
+
+            if (ResponseHeaders.TransferEncoding != null &&
+                Array.IndexOf<string>(ResponseHeaders.TransferEncoding,
+                    "chunked") >= 0)
+                content = GetChunkedContent();
+            else
+                content = GetNonChunkedContent();
+
+            return (content ?? new byte[0]);
+        }
+
+        /// <summary>
         /// Interpret a message with respect to its content encoding
         /// </summary>
         public Stream GetResponseMessageStream(byte[] msg)
@@ -895,8 +1018,8 @@ namespace TrotiNet
         /// <summary>
         /// Compress a byte array based on the content encoding header
         /// </summary>
-        /// <param name="output">The array to be compressed</param>
-        /// <returns>The compressed array</returns>
+        /// <param name="output">The content to be compressed</param>
+        /// <returns>The compressed content</returns>
         public byte[] CompressResponse(byte[] output)
         {
             string ce = ResponseHeaders.ContentEncoding;
@@ -906,7 +1029,7 @@ namespace TrotiNet
                 {
                     using (MemoryStream ms = new MemoryStream())
                     {
-                        using (DeflateStream ds = new DeflateStream(ms, 
+                        using (DeflateStream ds = new DeflateStream(ms,
                             CompressionMode.Compress, true))
                         {
                             ds.Write(output, 0, output.Length);
@@ -921,7 +1044,7 @@ namespace TrotiNet
                     {
                         using (MemoryStream ms = new MemoryStream())
                         {
-                            using (GZipStream gs = new GZipStream(ms, 
+                            using (GZipStream gs = new GZipStream(ms,
                                 CompressionMode.Compress, true))
                             {
                                 gs.Write(output, 0, output.Length);
@@ -931,11 +1054,9 @@ namespace TrotiNet
                         }
                     }
                     else
-                    {
-                        if (!ce.StartsWith("identity"))
-                            throw new TrotiNet.RuntimeException(
-                                "Unsupported Content-Encoding '" + ce + "'");
-                    }
+                    if (!ce.StartsWith("identity"))
+                        throw new TrotiNet.RuntimeException(
+                            "Unsupported Content-Encoding '" + ce + "'");
                 }
             }
 
@@ -948,48 +1069,7 @@ namespace TrotiNet
         public byte[] EncodeStringResponse(string s, Encoding encoding)
         {
             byte[] output = encoding.GetBytes(s);
-
-            string ce = ResponseHeaders.ContentEncoding;
-            if (!String.IsNullOrEmpty(ce))
-            {
-                if (ce.StartsWith("deflate"))
-                {
-                    using (MemoryStream ms = new MemoryStream())
-                    {
-                        using (DeflateStream ds = new DeflateStream(ms, 
-                            CompressionMode.Compress, true))
-                        {
-                            ds.Write(output, 0, output.Length);
-                            ds.Close();
-                        }
-                        return ms.ToArray();
-                    }
-                }
-                else
-                {
-                    if (ce.StartsWith("gzip"))
-                    {
-                        using (MemoryStream ms = new MemoryStream())
-                        {
-                            using (GZipStream gs = new GZipStream(ms, 
-                                CompressionMode.Compress, true))
-                            {
-                                gs.Write(output, 0, output.Length);
-                                gs.Close();
-                            }
-                            return ms.ToArray();
-                        }
-                    }
-                    else
-                    {
-                        if (!ce.StartsWith("identity"))
-                            throw new TrotiNet.RuntimeException(
-                                "Unsupported Content-Encoding '" + ce + "'");
-                    }
-                }
-            }
-
-            return output;
+            return CompressResponse(output);
         }
     }
 

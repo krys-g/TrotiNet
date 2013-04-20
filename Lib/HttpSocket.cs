@@ -407,9 +407,8 @@ namespace TrotiNet
                 UseLeftOverBytes = true;
 
                 if (total_sent + AvailableData > buffer.Length)
-                {
-                    buffer = new byte[(total_sent + AvailableData) * 2];
-                }
+                    Array.Resize<byte>(ref buffer,
+                        (int)(total_sent + AvailableData) * 2);
 
                 System.Buffer.BlockCopy(Buffer, (int)BufferPosition, buffer,
                     (int)total_sent, (int)to_send);
@@ -493,6 +492,7 @@ namespace TrotiNet
         /// </summary>
         public uint WriteBinary(byte[] b, uint offset, uint nb_bytes)
         {
+            LowLevelSocket.NoDelay = true;
             int r = LowLevelSocket.Send(b, (int)offset, (int)nb_bytes,
                 SocketFlags.None);
             if (r < 0)
