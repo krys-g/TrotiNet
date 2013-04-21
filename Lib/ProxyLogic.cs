@@ -873,7 +873,6 @@ namespace TrotiNet
         {
             char[] c_ChunkSizeEnd = { ' ', ';' };
             MemoryStream chunked_stream = new MemoryStream();
-            StreamWriter chunked_writer = new StreamWriter(chunked_stream);
 
             // (RFC 2616, sections 3.6.1, 19.4.6)
             while (true)
