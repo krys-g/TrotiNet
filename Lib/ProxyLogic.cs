@@ -185,14 +185,14 @@ namespace TrotiNet
                 if (hrl.URI.StartsWith("http://"))
                     prefix = 7; // length of "http://"
                 else
-                if (hrl.URI.StartsWith("https://"))
-                {
-                    prefix = 8; // length of "https://"
-                    port = 443;
-                }
-                else
-                throw new HttpProtocolBroken(
-                    "Expected scheme missing or unsupported");
+                    if (hrl.URI.StartsWith("https://"))
+                    {
+                        prefix = 8; // length of "https://"
+                        port = 443;
+                    }
+                    else
+                        throw new HttpProtocolBroken(
+                            "Expected scheme missing or unsupported");
             }
 
             // Starting from offset prefix, we now have either:
@@ -209,9 +209,11 @@ namespace TrotiNet
                 System.Diagnostics.Debug.Assert(bIsConnect);
             }
             else
+            {
                 if (slash > 0) // Strict inequality
                     // case 2
                     authority = hrl.URI.Substring(prefix, slash - prefix);
+            }
 
             if (authority != null)
             {
@@ -225,15 +227,15 @@ namespace TrotiNet
                     // case a)
                     host = authority;
                 else
-                if (c == authority.Length - 1)
-                    // case b)
-                    host = authority.TrimEnd('/');
-                else
-                {
-                    // case c)
-                    host = authority.Substring(0, c);
-                    port = int.Parse(authority.Substring(c + 1));
-                }
+                    if (c == authority.Length - 1)
+                        // case b)
+                        host = authority.TrimEnd('/');
+                    else
+                    {
+                        // case c)
+                        host = authority.Substring(0, c);
+                        port = int.Parse(authority.Substring(c + 1));
+                    }
 
                 prefix += authority.Length;
             }
@@ -259,30 +261,30 @@ namespace TrotiNet
                 // Remove the host from the request URI, unless the "server"
                 // is actually a proxy, in which case the URI should remain
                 // unchanged. (RFC 2616, section 5.1.2)
-                if (RelayHttpProxyHost == null)
+                if (RelayHttpProxyHost == null && !bIsConnect)
                 {
                     hrl.URI = hrl.URI.Substring(prefix);
-                    log.Debug("Rewriting request line as: " +
+                    log.Debug("Rewriting request line as: " + 
                         hrl.RequestLine);
                 }
 
                 return host;
             }
 
-        hostname_from_header:
+            hostname_from_header:
             host = hh_rq.Host;
             if (host == null)
                 throw new HttpProtocolBroken("No host specified");
             int cp = host.IndexOf(':');
             if (cp < 0) { /* nothing */ }
             else
-            if (cp == host.Length - 1)
-                host = host.TrimEnd('/');
-            else
-            {
-                host = host.Substring(0, cp);
-                port = int.Parse(host.Substring(cp + 1));
-            }
+                if (cp == host.Length - 1)
+                    host = host.TrimEnd('/');
+                else
+                {
+                    host = host.Substring(0, cp);
+                    port = int.Parse(host.Substring(cp + 1));
+                }
             return host;
         }
 
@@ -306,7 +308,7 @@ namespace TrotiNet
                 return;
             }
 
-            sps.GetHttpSpecificProxy(out RelayHttpProxyHost,
+            sps.GetHttpSpecificProxy(out RelayHttpProxyHost, 
                 out RelayHttpProxyPort);
             RelayHttpProxyOverride = null;
         }
@@ -337,7 +339,7 @@ namespace TrotiNet
     /// <summary>
     /// Implement the full HTTP proxy logic for one browser connection
     /// </summary>
-    public class BaseProxyLogic: AbstractProxyLogic
+    public class BaseProxyLogic : AbstractProxyLogic
     {
         static readonly ILog log = Log.Get();
 
@@ -540,15 +542,10 @@ namespace TrotiNet
                 return;
             }
 
-            RequestHeaders = new HttpHeaders(SocketBP);
+            // Check for SSL CONNECT Method
+            bool bIsConnect = RequestLine.Method.Equals("CONNECT");
 
-            if (RequestLine.Method.Equals("CONNECT"))
-            {
-                log.Debug("Method CONNECT not implemented");
-                SocketBP.Send501();
-                AbortRequest();
-                return;
-            }
+            RequestHeaders = new HttpHeaders(SocketBP);
 
             log.Info("Got request " + RequestLine.RequestLine);
 
@@ -589,15 +586,27 @@ namespace TrotiNet
                         State.bRequestMessageChunked);
                 }
                 else
-                if (RequestHeaders.ContentLength != null)
                 {
-                    State.RequestMessageLength =
-                        (uint)RequestHeaders.ContentLength;
+                    if (RequestHeaders.ContentLength != null)
+                    {
+                        State.RequestMessageLength =
+                            (uint)RequestHeaders.ContentLength;
 
-                    // Note: HTTP 1.0 wants "Content-Length: 0" when there
-                    // is no entity body. (RFC 1945, section 7.2)
-                    if (State.RequestMessageLength > 0)
-                        State.bRequestHasMessage = true;
+                        // Note: HTTP 1.0 wants "Content-Length: 0" when there
+                        // is no entity body. (RFC 1945, section 7.2)
+                        if (State.RequestMessageLength > 0)
+                            State.bRequestHasMessage = true;
+                    }
+                }
+
+                // Make SSL Tunnel, abort all other steps
+                if (bIsConnect)
+                {
+                    // Send "200 Connection Established" to client
+                    SocketBP.SendHTTPSEstablished();
+                    MakeSSLTunnel();
+                    // No other HTTP steps is needed
+                    State.NextStep = null;
                 }
             }
             // Step 3)
@@ -627,7 +636,6 @@ namespace TrotiNet
 
             // Note: we do not remove fields mentioned in the
             //  'Connection' header (the specs say we should).
-
         }
 
         /// <summary>
@@ -703,8 +711,8 @@ namespace TrotiNet
         /// </summary>
         protected virtual void SendResponse()
         {
-            if (!(ResponseHeaders.TransferEncoding == null &&
-                  ResponseHeaders.ContentLength == null))
+            if (!(ResponseHeaders.TransferEncoding == null && 
+                ResponseHeaders.ContentLength == null))
             {
                 // Transmit the response header to the client
                 SendResponseStatusAndHeaders();
@@ -807,12 +815,66 @@ namespace TrotiNet
             ResponseStatusLine.SendTo(SocketBP);
             ResponseHeaders.SendTo(SocketBP);
         }
+
+        /// <summary>
+        /// Make direct data tunneling between sockets in SSL mode
+        /// the client
+        /// </summary>
+        protected void MakeSSLTunnel()
+        {
+            Socket client = SocketBP.GetLowLevelSocket();
+            Socket server = SocketPS.GetLowLevelSocket();
+
+            /// Simple tunneling
+            while (client.Connected && server.Connected)
+            {
+                bool exchanged = false;
+
+                /// Client -> Server exchange
+                if (client.Poll(1000, SelectMode.SelectRead))
+                {
+                    using (var data = new MemoryStream())
+                    {
+                        client.ReadToStream(data);
+
+                        if (data.Length != 0)
+                        {
+                            server.Write(data);
+
+                            exchanged = true;
+                        }
+                    }
+                }
+
+                /// Server -> Client exchange
+                if (server.Poll(1000, SelectMode.SelectRead))
+                {
+                    using (var data = new MemoryStream())
+                    {
+                        server.ReadToStream(data);
+
+                        if (data.Length != 0)
+                        {
+                            client.Write(data);
+
+                            exchanged = true;
+                        }
+                    }
+                }
+
+                /// If both sockets was not used sleep for 50 ms
+                if (!exchanged)
+                {
+                    System.Threading.Thread.Sleep(50);
+                }
+            }
+        }
     }
 
     /// <summary>
     /// Wrapper around BaseProxyLogic that adds various utility functions
     /// </summary>
-    public class ProxyLogic: BaseProxyLogic
+    public class ProxyLogic : BaseProxyLogic
     {
         /// <summary>
         /// Instantiate a transparent proxy
@@ -1053,9 +1115,9 @@ namespace TrotiNet
                         }
                     }
                     else
-                    if (!ce.StartsWith("identity"))
-                        throw new TrotiNet.RuntimeException(
-                            "Unsupported Content-Encoding '" + ce + "'");
+                        if (!ce.StartsWith("identity"))
+                            throw new TrotiNet.RuntimeException(
+                                "Unsupported Content-Encoding '" + ce + "'");
                 }
             }
 
@@ -1087,7 +1149,7 @@ namespace TrotiNet
         /// <param name="socketBP">Client socket</param>
         /// <param name="PrintEchoPrefix">If true, the proxy will add an
         /// "Echo" prefix for each message</param>
-        public ProxyDummyEcho(HttpSocket socketBP, bool PrintEchoPrefix):
+        public ProxyDummyEcho(HttpSocket socketBP, bool PrintEchoPrefix) :
             base(socketBP)
         {
             bPrintEchoPrefix = PrintEchoPrefix;
