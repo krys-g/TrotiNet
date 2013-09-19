@@ -90,6 +90,14 @@ namespace TrotiNet
         /// </summary>
         protected Socket LowLevelSocket = null;
 
+        /// <summary>
+        /// Returns the wrapped socket
+        /// </summary>
+        public Socket GetLowLevelSocket()
+        {
+            return LowLevelSocket;
+        }
+
 #if DEBUG_IO_1
         void Trace(string msg)
         {
@@ -515,6 +523,16 @@ namespace TrotiNet
         }
 
         /// <summary>
+        /// Send a HTTPS established message to client
+        /// </summary>
+        public void SendHTTPSEstablished()
+        {
+            WriteBinary(System.Text.Encoding.ASCII.GetBytes(
+                "HTTP/1.0 200 Connection established" + "\r\n" +
+                "Proxy-agent: TrotiNet.Lib" + "\r\n\r\n"));
+        }
+
+        /// <summary>
         /// Send a HTTP 302 redirection over the socket
         /// </summary>
         public void Send302()
@@ -544,6 +562,14 @@ namespace TrotiNet
         public void Send404()
         {
             SendHttpError("404 Not Found");
+        }
+
+        /// <summary>
+        /// Send a HTTP 404 error over the socket
+        /// </summary>
+        public void Send405()
+        {
+            SendHttpError("405 Method Not Allowed");
         }
 
         /// <summary>
