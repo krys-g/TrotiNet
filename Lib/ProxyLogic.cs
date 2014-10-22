@@ -1,13 +1,15 @@
-﻿using System;
-using System.IO;
-using System.IO.Compression;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
-using log4net;
-
-namespace TrotiNet
+﻿namespace TrotiNet
 {
+    using System;
+    using System.Linq;
+    using System.IO;
+    using System.IO.Compression;
+    using System.Net;
+    using System.Net.Sockets;
+    using System.Text;
+    using log4net;
+    using System.Threading;
+
     /// <summary>
     /// Abstract class for all HTTP proxy logic implementations
     /// </summary>
@@ -105,7 +107,7 @@ namespace TrotiNet
                 SocketPS = null;
             }
 
-            IPAddress[] ips = Dns.GetHostAddresses(hostname);
+            IPAddress[] ips = Resolve(hostname);
             Socket socket = null;
             Exception e = null;
             foreach (var ip in ips)
@@ -143,6 +145,12 @@ namespace TrotiNet
             DestinationPort = port;
 
             log.Debug("SocketPS connected to " + hostname + ":" + port);
+        }
+
+        private static IPAddress[] Resolve(string hostname)
+        {
+            IPAddress[] ips = Dns.GetHostAddresses(hostname);
+            return ips;
         }
 
         /// <summary>
@@ -542,20 +550,17 @@ namespace TrotiNet
 
             RequestHeaders = new HttpHeaders(SocketBP);
 
-            if (RequestLine.Method.Equals("CONNECT"))
-            {
-                log.Debug("Method CONNECT not implemented");
-                SocketBP.Send501();
-                AbortRequest();
-                return;
-            }
-
             log.Info("Got request " + RequestLine.RequestLine);
 
             // We call OnReceiveRequest now because Connect() will
             // modify the request URI.
             State.NextStep = SendRequest;
             OnReceiveRequest();
+
+            if (RequestLine.Method.Equals("CONNECT"))
+            {
+                HandleConnect();
+            }
 
             // Now we parse the request to:
             // 1) find out where we should connect
@@ -628,6 +633,27 @@ namespace TrotiNet
             // Note: we do not remove fields mentioned in the
             //  'Connection' header (the specs say we should).
 
+        }
+
+        /// <summary>
+        /// A specific case for the CONNECT command,
+        /// connect both ends blindly (will work for HTTPS, SSH and others)
+        /// </summary>
+        virtual protected void HandleConnect()
+        {
+            int NewDestinationPort;
+            string NewDestinationHost = ParseDestinationHostAndPort(
+                RequestLine, RequestHeaders, out NewDestinationPort);
+            Connect(NewDestinationHost, NewDestinationPort);
+            this.State.NextStep = null;
+            this.SocketBP.WriteAsciiLine(string.Format("HTTP/{0} 200 Connection established", RequestLine.ProtocolVersion));
+            this.SocketBP.WriteAsciiLine(string.Empty);
+            var socketsToConnect = new[] { this.SocketBP, this.SocketPS };
+
+            socketsToConnect
+                .Zip(socketsToConnect.Reverse(), (from, to) => new { from,to })
+                .AsParallel()
+                .ForAll(team => team.from.TunnelDataTo(team.to));
         }
 
         /// <summary>
@@ -1072,63 +1098,4 @@ namespace TrotiNet
         }
     }
 
-    /// <summary>
-    /// Dummy proxy that simply echoes back what it gets from the browser
-    /// </summary>
-    /// Used for TCP testing.
-    public class ProxyDummyEcho : AbstractProxyLogic
-    {
-        bool bPrintEchoPrefix;
-
-        /// <summary>
-        /// Instantiate a dummy proxy that echoes what it reads on the
-        /// socket back to it
-        /// </summary>
-        /// <param name="socketBP">Client socket</param>
-        /// <param name="PrintEchoPrefix">If true, the proxy will add an
-        /// "Echo" prefix for each message</param>
-        public ProxyDummyEcho(HttpSocket socketBP, bool PrintEchoPrefix):
-            base(socketBP)
-        {
-            bPrintEchoPrefix = PrintEchoPrefix;
-        }
-
-        /// <summary>
-        /// Static constructor with <c>PrintEchoPrefix = true</c>
-        /// </summary>
-        static public AbstractProxyLogic CreateEchoProxy(HttpSocket socketBP)
-        {
-            return new ProxyDummyEcho(socketBP, true);
-        }
-
-        /// <summary>
-        /// Static constructor with <c>PrintEchoPrefix = false</c>
-        /// </summary>
-        static public AbstractProxyLogic CreateMirrorProxy(HttpSocket socketBP)
-        {
-            return new ProxyDummyEcho(socketBP, false);
-        }
-
-        /// <summary>
-        /// Dummy logic loop, for test purposes
-        /// </summary>
-        override public bool LogicLoop()
-        {
-            uint r = SocketBP.ReadBinary();
-            if (r == 0)
-                // Connection closed
-                return false;
-
-            string s = System.Text.ASCIIEncoding.ASCII.GetString(
-                SocketBP.Buffer, 0, (int)r);
-            if (bPrintEchoPrefix)
-                SocketBP.WriteBinary(System.Text.ASCIIEncoding.
-                    ASCII.GetBytes("Echo: "));
-            SocketBP.WriteBinary(SocketBP.Buffer, r);
-
-            if (s.StartsWith("x"))
-                return false;
-            return true;
-        }
-    }
 }

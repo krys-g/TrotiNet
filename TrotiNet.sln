@@ -1,6 +1,8 @@
 ﻿
-Microsoft Visual Studio Solution File, Format Version 10.00
-# Visual Studio 2008
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2013
+VisualStudioVersion = 12.0.30723.0
+MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrotiNet.Lib", "Lib\TrotiNet.Lib.csproj", "{7FEDA61E-ED0A-4357-932E-746C697E464E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrotiNet.Test", "Test\TrotiNet.Test.csproj", "{9EF8F3BA-0E1A-4ABD-897E-1F7BC94EE99B}"
