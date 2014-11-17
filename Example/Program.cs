@@ -26,9 +26,9 @@ namespace TrotiNet.Example
 
             var Server = new TcpServer(port, bUseIPv6);
 
-            //Server.Start(TransparentProxy.CreateProxy);
+            Server.Start(TransparentProxy.CreateProxy);
             //Server.Start(RedirectingProxy.CreateProxy);
-            Server.Start(RewritingProxy.CreateProxy);
+            //Server.Start(RewritingProxy.CreateProxy);
 
             Server.InitListenFinished.WaitOne();
             if (Server.InitListenException != null)
