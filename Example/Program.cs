@@ -10,9 +10,6 @@
  * it.
  */
 
-using System;
-using TrotiNet.Example;
-
 namespace TrotiNet.Example
 {
     public static class Example
@@ -21,18 +18,18 @@ namespace TrotiNet.Example
         {
             Utils.Log_Init();
 
-            int port = 12345;
-            bool bUseIPv6 = false;
+            const int port = 12345;
+            const bool useIPv6 = false;
 
-            var Server = new TcpServer(port, bUseIPv6);
+            var server = new TcpServer(port, useIPv6);
 
-            Server.Start(TransparentProxy.CreateProxy);
+            server.Start(TransparentProxy.CreateProxy);
             //Server.Start(RedirectingProxy.CreateProxy);
             //Server.Start(RewritingProxy.CreateProxy);
 
-            Server.InitListenFinished.WaitOne();
-            if (Server.InitListenException != null)
-                throw Server.InitListenException;
+            server.InitListenFinished.WaitOne();
+            if (server.InitListenException != null)
+                throw server.InitListenException;
 
             while (true)
                 System.Threading.Thread.Sleep(1000);
