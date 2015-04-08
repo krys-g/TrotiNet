@@ -636,6 +636,22 @@
         }
 
         /// <summary>
+        /// Handling websocket handshake.
+        /// </summary>
+        private void HandleWebSocket()
+        {
+            if (ResponseStatusLine.StatusCode == 101)
+            {
+                SendResponseStatusAndHeaders();
+                this.State.NextStep = null;
+                var socketsToConnect = new[] { this.SocketPS, this.SocketBP };
+                socketsToConnect.Zip(socketsToConnect.Reverse(), (from, to) => new { from, to })
+                   .AsParallel().ForAll(team => team.from.TunnelDataTo(team.to));
+                return;
+            }
+        }
+
+        /// <summary>
         /// A specific case for the CONNECT command,
         /// connect both ends blindly (will work for HTTPS, SSH and others)
         /// </summary>
@@ -735,6 +751,9 @@
                 // Transmit the response header to the client
                 SendResponseStatusAndHeaders();
             }
+
+            // Handle if connection is websocket
+            HandleWebSocket();
 
             // Find out if there is a message body
             // (RFC 2616, section 4.4)
