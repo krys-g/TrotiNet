@@ -21,8 +21,8 @@ namespace TrotiNet.Example
         {
             Utils.Log_Init();
 
-            int port = 12345;
-            bool bUseIPv6 = false;
+            const int port = 12345;
+            const bool bUseIPv6 = false;
 
             var Server = new TcpServer(port, bUseIPv6);
 
