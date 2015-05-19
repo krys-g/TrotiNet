@@ -132,6 +132,9 @@ namespace TrotiNet
         /// </summary>
         void AcceptCallback(IAsyncResult ar)
         {
+            if (IsShuttingDown)
+                return;
+
             // Have we really changed thread?
             if (ListeningThread.ManagedThreadId ==
                 System.Threading.Thread.CurrentThread.ManagedThreadId)
@@ -140,9 +143,6 @@ namespace TrotiNet
                 new Thread(() => AcceptCallback(ar)).Start();
                 return;
             }
-
-            if (IsShuttingDown)
-                return;
 
             // Get the socket that handles the client request
             Socket listener = (Socket)ar.AsyncState;
