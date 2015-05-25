@@ -9,6 +9,7 @@
     using System.Text;
     using log4net;
     using System.Threading;
+    using System.Threading.Tasks;
 
     /// <summary>
     /// Abstract class for all HTTP proxy logic implementations
@@ -636,19 +637,15 @@
         }
 
         /// <summary>
-        /// Handling websocket handshake.
+        /// Handling websocket handshake and tunnel the two ends
         /// </summary>
         private void HandleWebSocket()
         {
-            if (ResponseStatusLine.StatusCode == 101)
-            {
-                SendResponseStatusAndHeaders();
-                this.State.NextStep = null;
-                var socketsToConnect = new[] { this.SocketPS, this.SocketBP };
-                socketsToConnect.Zip(socketsToConnect.Reverse(), (from, to) => new { from, to })
-                   .AsParallel().ForAll(team => team.from.TunnelDataTo(team.to));
-                return;
-            }
+            this.State.NextStep = null;
+            var socketsToConnect = new[] { this.SocketPS, this.SocketBP };
+            var upDatedSoc = socketsToConnect.Zip(socketsToConnect.Reverse(), (from, to) => new { from, to }).ToList();
+            Parallel.ForEach(upDatedSoc, team => { team.from.TunnelDataTo(team.to); });
+            return;
         }
 
         /// <summary>
@@ -751,19 +748,26 @@
                 // Transmit the response header to the client
                 SendResponseStatusAndHeaders();
             }
-
-            // Handle if connection is websocket
-            HandleWebSocket();
-
+            int sc = ResponseStatusLine.StatusCode;
             // Find out if there is a message body
             // (RFC 2616, section 4.4)
-            int sc = ResponseStatusLine.StatusCode;
             if (RequestLine.Method.Equals("HEAD") ||
                 sc == 204 || sc == 304 || (sc >= 100 && sc <= 199))
             {
                 SendResponseStatusAndHeaders();
+
+                if (sc == 101) // Handle if the connection is websocket connection
+                {
+                    string upgradeHeaderValue;
+                    ResponseHeaders.Headers.TryGetValue("upgrade", out upgradeHeaderValue);
+                    if (!string.IsNullOrEmpty(upgradeHeaderValue) && upgradeHeaderValue.ToLower().Equals("websocket"))
+                    {
+                        HandleWebSocket();
+                    }
+                }
                 goto no_message_body;
             }
+
 
             bool bResponseMessageChunked = false;
             uint ResponseMessageLength = 0;
