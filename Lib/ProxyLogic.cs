@@ -9,6 +9,7 @@
     using System.Text;
     using log4net;
     using System.Threading;
+    using System.Threading.Tasks;
 
     /// <summary>
     /// Abstract class for all HTTP proxy logic implementations
@@ -636,6 +637,18 @@
         }
 
         /// <summary>
+        /// Handle a websocket handshake and tunnel the two ends
+        /// </summary>
+        private void HandleWebSocket()
+        {
+            this.State.NextStep = null;
+            var socketsToConnect = new[] { this.SocketPS, this.SocketBP };
+            var upDatedSoc = socketsToConnect.Zip(socketsToConnect.Reverse(), (from, to) => new { from, to }).ToList();
+            Parallel.ForEach(upDatedSoc, team => { team.from.TunnelDataTo(team.to); });
+            return;
+        }
+
+        /// <summary>
         /// A specific case for the CONNECT command,
         /// connect both ends blindly (will work for HTTPS, SSH and others)
         /// </summary>
@@ -743,6 +756,17 @@
                 sc == 204 || sc == 304 || (sc >= 100 && sc <= 199))
             {
                 SendResponseStatusAndHeaders();
+
+                // Is the connection a websocket one?
+                if (sc == 101)
+                {
+                    string upgradeHeaderValue;
+                    ResponseHeaders.Headers.TryGetValue("upgrade", out upgradeHeaderValue);
+                    if (!string.IsNullOrEmpty(upgradeHeaderValue) && upgradeHeaderValue.ToLower().Equals("websocket"))
+                    {
+                        HandleWebSocket();
+                    }
+                }
                 goto no_message_body;
             }
 
