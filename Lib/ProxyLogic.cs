@@ -249,22 +249,6 @@
 
             if (host != null)
             {
-#if false
-                // XXX Not sure whether this can happen (without doing ad
-                // replacement) or if we want to prevent it
-                if (hh_rq.Host != null)
-                {
-                    // Does hh_rq.Host and host match? (disregarding
-                    // the potential ":port" prefix of hh_rq.Host)
-                    int c2 = hh_rq.Host.IndexOf(':');
-                    string rq_host = c2 < 0 ? hh_rq.Host :
-                        hh_rq.Host.Substring(0, c2);
-                    if (!rq_host.Equals(host))
-                        // Host discrepancy: fix the 'Host' header
-                        hh_rq.Host = host;
-                }
-#endif
-
                 // Remove the host from the request URI, unless the "server"
                 // is actually a proxy, in which case the URI should remain
                 // unchanged. (RFC 2616, section 5.1.2)
