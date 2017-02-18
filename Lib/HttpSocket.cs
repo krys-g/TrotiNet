@@ -304,6 +304,37 @@ namespace TrotiNet
             return total_sent;
         }
 
+        
+        /// <summary>
+        /// Transfer data from the socket to the specified packet handler with Async Mode
+        /// This is Just For A SSL Tunneling
+        /// </summary>
+        /// <returns>The number of bytes sent</returns>
+        public IAsyncResult TunnelDataAsyncTo(HttpSocket dest)
+        {
+            byte[] buffer = new byte[4096];
+            IAsyncResult Result = LowLevelSocket.BeginReceive(buffer, 0, buffer.Length, SocketFlags.None, new AsyncCallback((ar) =>
+                {
+                    try
+                    {
+                        int Ret = (int)ar.AsyncState;
+                        
+                        Ret = LowLevelSocket.EndReceive(ar);
+                        if (Ret > 0)
+                        {
+                            dest.WriteBinary(buffer, 0, (uint)Ret);
+                        }
+                        else
+                        {
+                            CloseSocket();
+                        }
+                    }
+                    catch {  }
+                }), new int());
+            return Result;
+        }
+
+
         /// <summary>
         /// Transfer data from the socket to the specified packet handler
         /// until the socket closes
